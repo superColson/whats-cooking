@@ -5,6 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use tauri::menu::{Menu, MenuItem};
 use tauri::tray::{MouseButton, MouseButtonState, TrayIconBuilder, TrayIconEvent};
+use tauri::image::Image;
 use tauri::{AppHandle, Manager};
 use tauri_plugin_window_state::StateFlags;
 
@@ -60,6 +61,16 @@ fn append_event(mut event: serde_json::Map<String, serde_json::Value>) -> Result
     file.write_all(line.as_bytes()).map_err(|e| e.to_string())
 }
 
+/// Show the number of active dishes next to the tray icon (AppIndicator label on Linux).
+#[tauri::command]
+fn set_tray_count(app: AppHandle, count: usize) {
+    if let Some(tray) = app.tray_by_id("main") {
+        let label = if count > 0 { Some(count.to_string()) } else { None };
+        let _ = tray.set_title(label.as_deref());
+        let _ = tray.set_tooltip(Some(format!("What's Cooking · {count}")));
+    }
+}
+
 /// Show the card if hidden, hide it otherwise.
 fn toggle_card(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
@@ -79,7 +90,7 @@ fn build_tray(app: &AppHandle) -> tauri::Result<()> {
     let menu = Menu::with_items(app, &[&toggle, &quit])?;
     TrayIconBuilder::with_id("main")
         .tooltip("What's Cooking")
-        .icon(app.default_window_icon().cloned().expect("bundled icon"))
+        .icon(Image::from_bytes(include_bytes!("../icons/tray.png"))?)
         .menu(&menu)
         .show_menu_on_left_click(false)
         .on_menu_event(|app, event| match event.id.as_ref() {
@@ -109,7 +120,7 @@ pub fn run() {
         }))
         // Position is left to the window manager (and the GNOME pin extension on Wayland).
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(StateFlags::SIZE).build())
-        .invoke_handler(tauri::generate_handler![read_journal, append_event])
+        .invoke_handler(tauri::generate_handler![read_journal, append_event, set_tray_count])
         .setup(|app| {
             build_tray(app.handle())?;
             Ok(())

@@ -10,7 +10,9 @@ const TIMER_CLICK_MIN = 5;
 const TIMER_WHEEL_MIN = 1;
 const MIN_W = 320;
 const MIN_H = 420;
-const COLLAPSED_H = 52;
+const MAX_W = 640;
+const MAX_H = 1260;
+const SCREEN_MARGIN = 64;
 const DAY_MS = 86400e3;
 
 const $ = id => document.getElementById(id);
@@ -25,6 +27,7 @@ let lastText = null;
 let busy = 0;           // > 0 while the user edits, drags or has a popover open
 let pointerDown = false;
 let renderPending = false;
+let trayCount = -1;
 const readyEmitted = new Set();
 const prefs = loadPrefs();
 
@@ -33,13 +36,13 @@ const prefs = loadPrefs();
 /**
  * Load per-window UI preferences.
  *
- * @returns {{washerOpen: boolean, collapsed: boolean, expandedH: number|null}}
+ * @returns {{washerOpen: boolean}}
  */
 function loadPrefs() {
   try {
-    return {washerOpen: false, collapsed: false, expandedH: null, ...JSON.parse(localStorage.getItem('prefs') || '{}')};
+    return {washerOpen: false, ...JSON.parse(localStorage.getItem('prefs') || '{}')};
   } catch {
-    return {washerOpen: false, collapsed: false, expandedH: null};
+    return {washerOpen: false};
   }
 }
 
@@ -128,20 +131,20 @@ function icon(path) {
 }
 
 /**
- * Describe the status shown in the Meta line.
+ * Describe the detail shown under the state name (timer, Claude activity).
  *
  * @param {object} dish
  * @param {number} now
  * @returns {string}
  */
-function statusText(dish, now) {
+function stateDetail(dish, now) {
   const claude = dish.source === 'claude';
-  if (dish.state === 'ready') return claude ? 'to review' : 'ready';
+  if (dish.state === 'ready') return claude ? 'to review' : '';
   if (dish.state === 'waiting') {
-    if (dish.until) return `waiting · ${Math.max(1, Math.ceil((Date.parse(dish.until) - now) / 60e3))} min`;
-    return claude ? 'Claude working…' : 'waiting';
+    if (dish.until) return `${Math.max(1, Math.ceil((Date.parse(dish.until) - now) / 60e3))} min`;
+    return claude ? 'Claude…' : '';
   }
-  return dish.state;
+  return '';
 }
 
 /**
@@ -172,12 +175,13 @@ function render() {
   const active = kitchen.dishes.filter(d => d.state !== 'done');
   const ready = active.filter(d => d.state === 'ready').length;
 
-  els.head.textContent = prefs.collapsed && active.find(d => d.state === 'cooking')
-    ? active.find(d => d.state === 'cooking').title
-    : `Cooking · ${active.length}`;
+  els.head.textContent = `Cooking · ${active.length}`;
   els.badge.hidden = !ready;
   els.badge.textContent = `${ready} ready`;
-  els.card.classList.toggle('collapsed', prefs.collapsed);
+  if (active.length !== trayCount) {
+    trayCount = active.length;
+    invoke('set_tray_count', {count: trayCount}).catch(() => {});
+  }
 
   els.list.replaceChildren(...active.map(d => dishRow(d, now)));
   if (!active.length) els.list.append(el('div', 'empty', 'Nothing cooking.'));
@@ -209,7 +213,7 @@ function dishRow(dish, now) {
   const meta = el('div', 'meta');
   const tag = dish.tag ? tagBadge(dish.tag) : el('span', 'tag add', '+ tag');
   tag.onclick = ev => openTagPopover(dish, ev.currentTarget);
-  meta.append(tag, el('span', `st ${dish.state}`, statusText(dish, now)));
+  meta.append(tag);
   const age = now - Date.parse(dish.created);
   if (age >= DAY_MS) meta.append(el('span', 'age', `· ${Math.floor(age / DAY_MS)} d`));
   txt.append(title, meta);
@@ -248,7 +252,12 @@ function dishRow(dish, now) {
   };
   actions.append(timer, done, del);
 
-  row.append(grip, dot, txt, actions);
+  const side = el('div', 'side');
+  side.append(el('div', `state ${dish.state}`, dish.state));
+  const detail = stateDetail(dish, now);
+  if (detail) side.append(el('div', 'sub', detail));
+
+  row.append(grip, dot, txt, side, actions);
   return row;
 }
 
@@ -545,20 +554,39 @@ window.Sortable.create(els.list, {
 // ---- window chrome ----------------------------------------------------------
 
 $('hide').onclick = () => appWindow.hide();
-$('collapse').onclick = async () => {
+/**
+ * Largest card size allowed by the config and the current screen.
+ *
+ * @returns {Promise<{width: number, height: number}>}
+ */
+async function maxSize() {
+  const monitor = await tauri.window.currentMonitor();
+  if (!monitor) return {width: MAX_W, height: MAX_H};
+  const screen = (monitor.workArea?.size ?? monitor.size).toLogical(monitor.scaleFactor);
+  return {width: Math.min(MAX_W, screen.width - SCREEN_MARGIN), height: Math.min(MAX_H, screen.height - SCREEN_MARGIN)};
+}
+
+/**
+ * Show the shrink icon at maximum size, the grow icon otherwise.
+ */
+async function syncSizeButton() {
   const size = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
-  prefs.collapsed = !prefs.collapsed;
-  if (prefs.collapsed) {
-    prefs.expandedH = Math.round(size.height);
-    await appWindow.setMinSize(new LogicalSize(MIN_W, COLLAPSED_H));
-    await appWindow.setSize(new LogicalSize(size.width, COLLAPSED_H));
+  const max = await maxSize();
+  const maxed = size.width >= max.width - 8 && size.height >= max.height - 8;
+  els.card.classList.toggle('maxed', maxed);
+  $('size').title = maxed ? 'Shrink to minimum size' : 'Grow to maximum size';
+}
+
+$('size').onclick = async () => {
+  if (els.card.classList.contains('maxed')) {
+    await appWindow.setSize(new LogicalSize(MIN_W, MIN_H));
   } else {
-    await appWindow.setSize(new LogicalSize(size.width, Math.max(prefs.expandedH ?? MIN_H, MIN_H)));
-    await appWindow.setMinSize(new LogicalSize(MIN_W, MIN_H));
+    const max = await maxSize();
+    await appWindow.setSize(new LogicalSize(max.width, max.height));
   }
-  savePrefs();
-  render();
+  setTimeout(syncSizeButton, 150);
 };
+appWindow.onResized(() => syncSizeButton());
 $('washer-toggle').onclick = () => {
   prefs.washerOpen = !prefs.washerOpen;
   savePrefs();
@@ -575,17 +603,10 @@ document.addEventListener('mouseup', () => {
   if (renderPending) setTimeout(() => { if (!busy) render(); }, 0);
 }, true);
 window.addEventListener('focus', () => {
-  if (document.activeElement === document.body && !prefs.collapsed) els.entry.focus();
+  if (document.activeElement === document.body) els.entry.focus();
 });
 
-if (prefs.collapsed) {
-  (async () => {
-    const size = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
-    await appWindow.setMinSize(new LogicalSize(MIN_W, COLLAPSED_H));
-    await appWindow.setSize(new LogicalSize(size.width, COLLAPSED_H));
-  })();
-}
-
+syncSizeButton();
 refresh(true);
 setInterval(() => refresh(false), REFRESH_MS);
 setInterval(() => { if (!busy) render(); }, 20e3);

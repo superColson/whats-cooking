@@ -12,6 +12,7 @@ const MARGIN = 16;
 const PLACE_DELAY_MS = 250;
 const PLACE_TRIES = 20;
 const SAVE_DELAY_MS = 500;
+const DOCK_SNAP = 24;
 const POSITION_FILE = GLib.build_filenamev([GLib.get_user_data_dir(), 'whats-cooking', 'window-position.json']);
 
 /**
@@ -137,19 +138,38 @@ export default class WhatsCookingPinExtension extends Extension {
         this._pinned.add(win);
         win.make_above();
         win.stick();
-        // Mutter applies its own initial placement on first map, so move afterwards.
+        // Mutter applies its own initial placement on first map; moving in the
+        // 'shown' handler happens before the first frame is painted, so no flash.
+        let placed = false;
+        const settle = () => {
+            if (placed || !(win.get_frame_rect().width > 0))
+                return placed;
+            placed = true;
+            this._place(win);
+            let last = win.get_frame_rect();
+            win.connect('position-changed', () => {
+                last = win.get_frame_rect();
+                this._scheduleSave(win);
+            });
+            win.connect('size-changed', () => {
+                last = this._keepRightEdge(win, last);
+            });
+            if (this._focusNext) {
+                this._focusNext = false;
+                win.activate(global.get_current_time());
+            }
+            return true;
+        };
+        const shownId = win.connect('shown', () => {
+            win.disconnect(shownId);
+            settle();
+        });
+        // Fallback for windows already shown when the extension is enabled.
         let tries = 0;
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACE_DELAY_MS, () => {
-            const mapped = win.get_compositor_private()?.visible && win.get_frame_rect().width > 0;
-            if (mapped) {
-                this._place(win);
-                win.connect('position-changed', () => this._scheduleSave(win));
-                if (this._focusNext) {
-                    this._focusNext = false;
-                    win.activate(global.get_current_time());
-                }
-            }
-            return !mapped && ++tries < PLACE_TRIES ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
+            if (!placed && win.get_compositor_private()?.visible)
+                settle();
+            return !placed && ++tries < PLACE_TRIES ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
         });
         return true;
     }
@@ -170,6 +190,26 @@ export default class WhatsCookingPinExtension extends Extension {
             y = Math.min(Math.max(saved.y, area.y), area.y + area.height - 40);
         }
         win.move_frame(true, x, y);
+    }
+
+    /**
+     * Keep a card docked to the right of the screen docked there when it resizes.
+     *
+     * @param {Meta.Window} win
+     * @param {Mtk.Rectangle} before frame rect before the resize
+     * @returns {Mtk.Rectangle} the frame rect now
+     */
+    _keepRightEdge(win, before) {
+        const area = Main.layoutManager.getWorkAreaForMonitor(win.get_monitor());
+        const rect = win.get_frame_rect();
+        const right = before.x + before.width;
+        const docked = right >= area.x + area.width - MARGIN - DOCK_SNAP;
+        if (docked && rect.width !== before.width) {
+            const x = Math.max(area.x, right - rect.width);
+            win.move_frame(true, x, rect.y);
+            return win.get_frame_rect();
+        }
+        return rect;
     }
 
     /**

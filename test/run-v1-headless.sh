@@ -20,7 +20,7 @@ dbus-run-session -- bash -s "$ROOT" "$OUT" "$STEPS" <<'INNER'
 set -u
 ROOT=$1 OUT=$2 STEPS=$3
 C="$ROOT/bin/cook"
-gsettings set org.gnome.shell enabled-extensions "['whats-cooking-pin@localhost','helper@localhost']"
+gsettings set org.gnome.shell enabled-extensions "['whats-cooking-pin@localhost','helper@localhost','ubuntu-appindicators@ubuntu.com']"
 gsettings set org.gnome.shell welcome-dialog-last-shown-version '999'
 $C add "Reply to accounting mail #internal" >/dev/null
 $C add "Restore prod backup #globex /w 12" >/dev/null
