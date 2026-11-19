@@ -18,7 +18,7 @@ from pathlib import Path
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "whats-cooking"
 JOURNAL = DATA_DIR / "journal.jsonl"
 TITLE_MAX = 70
-WEEKDAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 
 
 def now_iso(minutes=0):
@@ -225,11 +225,11 @@ def cmd_log(args):
             continue
         done = datetime.fromisoformat(task["done_at"].replace("Z", "+00:00")).astimezone()
         if done.date() == day:
-            groups[task["tag"] or "(sans tag)"].append((done, task))
+            groups[task["tag"] or "(no tag)"].append((done, task))
     if not groups:
-        print(f"Aucune tâche terminée le {day:%d/%m/%Y}.")
+        print(f"No task done on {WEEKDAYS[day.weekday()]} {day:%Y-%m-%d}.")
         return
-    print(f"Terminées le {WEEKDAYS[day.weekday()]} {day:%d/%m/%Y}")
+    print(f"Done on {WEEKDAYS[day.weekday()]} {day:%Y-%m-%d}")
     for tag in sorted(groups):
         print(f"\n#{tag}")
         for done, task in sorted(groups[tag], key=lambda item: item[0]):
@@ -257,7 +257,7 @@ def cmd_hook(_args):
         if event_name == "UserPromptSubmit":
             if not task:
                 prompt = (payload.get("prompt") or "").strip().splitlines()
-                title = prompt[0] if prompt else "Session Claude"
+                title = prompt[0] if prompt else "Claude session"
                 if len(title) > TITLE_MAX:
                     title = title[:TITLE_MAX - 1] + "…"
                 append({"op": "add", "id": task_id, "title": title, "tag": env_tag(payload.get("cwd")),

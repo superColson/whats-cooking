@@ -201,7 +201,7 @@ export default class WhatsCookingExtension extends Extension {
 
         this._entry = new St.Entry({
             style_class: 'cook-entry',
-            hint_text: 'Nouvelle tâche  #tag  /w 20',
+            hint_text: 'New task  #tag  /w 20',
             can_focus: true,
             x_expand: true,
         });
@@ -400,15 +400,15 @@ export default class WhatsCookingExtension extends Extension {
         const current = active.find(t => t.state === 'doing');
         this._headerTitle.text = this._ui.collapsed && current
             ? current.title
-            : `Sur le feu · ${active.length}`;
+            : `Cooking · ${active.length}`;
         this._badge.visible = alerts.length > 0;
-        this._badge.text = `${alerts.length} prête${alerts.length > 1 ? 's' : ''}`;
+        this._badge.text = `${alerts.length} ready`;
         if (alerts.length)
             this._alertActors.push(this._badge);
 
         this._list.destroy_all_children();
         if (!active.length) {
-            this._list.add_child(new St.Label({style_class: 'cook-empty', text: 'Rien sur le feu.'}));
+            this._list.add_child(new St.Label({style_class: 'cook-empty', text: 'Nothing cooking.'}));
         }
         active.forEach((task, index) => {
             const row = this._buildRow(task, index, now);
@@ -445,11 +445,11 @@ export default class WhatsCookingExtension extends Extension {
             parts.push(`#${task.tag}`);
         if (task.state === 'wait') {
             if (isAlert(task, now))
-                parts.push(task.source === 'claude' ? 'à relire' : 'prête');
+                parts.push(task.source === 'claude' ? 'to review' : 'ready');
             else if (task.until)
                 parts.push(`${Math.ceil((Date.parse(task.until) - now) / 60000)} min`);
             else
-                parts.push(task.source === 'claude' ? 'Claude travaille…' : 'en attente');
+                parts.push(task.source === 'claude' ? 'Claude working…' : 'waiting');
         }
         return parts.join(' · ');
     }
@@ -484,7 +484,7 @@ export default class WhatsCookingExtension extends Extension {
         const dot = new St.Button({
             style_class: `cook-dot cook-dot-${task.state}`,
             y_align: Clutter.ActorAlign.CENTER,
-            accessible_name: 'Changer l’état',
+            accessible_name: 'Change state',
         });
         dot.connect('clicked', () => this._emit({
             op: 'set', id: task.id, state: NEXT_STATE[task.state] ?? 'doing', alert: false, until: null,
