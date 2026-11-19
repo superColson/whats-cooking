@@ -217,12 +217,14 @@ function dishRow(dish, now) {
   title.title = dish.title;
   title.ondblclick = () => editTitle(dish, title);
   const meta = el('div', 'meta');
+  meta.append(el('span', `state ${dish.state}`, dish.state));
+  const detail = stateDetail(dish, now);
+  if (detail) meta.append(el('span', 'detail', `· ${detail}`));
+  const age = now - Date.parse(dish.created);
+  if (age >= DAY_MS) meta.append(el('span', 'age', `· ${Math.floor(age / DAY_MS)} d`));
   const tag = dish.tag ? tagBadge(dish.tag) : el('span', 'tag add', '+ tag');
   tag.onclick = ev => openTagPopover(dish, ev.currentTarget);
   meta.append(tag);
-  const age = now - Date.parse(dish.created);
-  if (age >= DAY_MS) meta.append(el('span', 'age', `· ${Math.floor(age / DAY_MS)} d`));
-  txt.append(title, meta);
 
   const actions = el('div', 'actions');
   const timer = el('button', 'act');
@@ -258,12 +260,10 @@ function dishRow(dish, now) {
   };
   actions.append(timer, done, del);
 
-  const side = el('div', 'side');
-  side.append(el('div', `state ${dish.state}`, dish.state));
-  const detail = stateDetail(dish, now);
-  if (detail) side.append(el('div', 'sub', detail));
-
-  row.append(grip, dot, txt, side, actions);
+  const top = el('div', 'top');
+  top.append(title, actions);
+  txt.append(top, meta);
+  row.append(grip, dot, txt);
   return row;
 }
 
@@ -640,11 +640,22 @@ $('resize').onmousedown = ev => {
   ev.preventDefault();
   appWindow.startResizeDragging('SouthEast');
 };
-document.addEventListener('mousedown', () => { pointerDown = true; }, true);
-document.addEventListener('mouseup', () => {
+/**
+ * Forget a pressed button and run the render it postponed.
+ */
+function releasePointer() {
   pointerDown = false;
   if (renderPending) setTimeout(() => { if (!busy) render(); }, 0);
+}
+
+// Header (move) and corner (resize) presses hand the pointer to the compositor, which keeps the release.
+document.addEventListener('mousedown', ev => {
+  if (!ev.target.closest('[data-tauri-drag-region], #resize')) pointerDown = true;
 }, true);
+document.addEventListener('mouseup', releasePointer, true);
+document.addEventListener('pointercancel', releasePointer, true);
+document.documentElement.addEventListener('mouseleave', releasePointer);
+window.addEventListener('blur', releasePointer);
 window.addEventListener('focus', () => {
   if (document.activeElement === document.body) els.entry.focus();
 });
