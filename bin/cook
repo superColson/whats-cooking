@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Command-line companion of the What's Cooking GNOME Shell extension.
+"""Command-line companion of the What's Cooking app.
 
 Every command appends events to ``$XDG_DATA_HOME/whats-cooking/journal.jsonl``;
-the extension watches that file and refreshes itself.
+the app watches that file and refreshes itself.
 """
 import argparse
+import glob
 import json
 import os
 import random
@@ -17,8 +18,17 @@ from pathlib import Path
 
 DATA_DIR = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "whats-cooking"
 JOURNAL = DATA_DIR / "journal.jsonl"
+CLAUDE_SESSIONS = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "Claude/claude-code-sessions"
 TITLE_MAX = 70
+DAY_START_HOUR = 4
+STATES = ("queued", "cooking", "waiting", "ready", "done")
+LEGACY_STATES = {"todo": "queued", "doing": "cooking", "wait": "waiting"}
+PALETTE = (
+    "#3584e4", "#2ec27e", "#e66100", "#9141ac", "#e01b24", "#1c71d8", "#26a269", "#c64600",
+    "#813d9c", "#f5c211", "#33d17a", "#ff7800", "#dc8add", "#62a0ea", "#865e3c", "#5e5c64",
+)
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
+MARKS = {"queued": "○", "cooking": "●", "waiting": "◐", "ready": "!"}
 
 
 def now_iso(minutes=0):
@@ -32,8 +42,18 @@ def now_iso(minutes=0):
     return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
 
 
+def parse_ts(value):
+    """Parse an ISO 8601 timestamp written by the app or the CLI.
+
+    :param value: timestamp string
+    :return: aware datetime in local time
+    :rtype: datetime
+    """
+    return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone()
+
+
 def new_id():
-    """Return a short unique task id.
+    """Return a short unique dish id.
 
     :return: base-36 id
     :rtype: str
@@ -62,42 +82,88 @@ def append(event):
 
 
 def fold():
-    """Replay the journal into the ordered task list.
+    """Replay the journal into the kitchen state.
 
-    :return: tasks in display order, done ones included
-    :rtype: list[dict]
+    Legacy events (``todo``/``doing``/``wait`` states, ``alert`` flag) are
+    mapped to the current model while reading.
+
+    :return: ``(dishes in display order, tags by name, last wash timestamp)``
+    :rtype: tuple
     """
-    tasks, order = {}, []
+    dishes, order, tags, washed_at = {}, [], {}, None
     if not JOURNAL.exists():
-        return []
+        return [], tags, washed_at
     for line in JOURNAL.read_text(encoding="utf-8").splitlines():
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        task = tasks.get(ev.get("id"))
         op = ev.get("op")
-        if op == "add" and not task:
-            tasks[ev["id"]] = {
+        dish = dishes.get(ev.get("id"))
+        if op == "add" and not dish:
+            dishes[ev["id"]] = {
                 "id": ev["id"], "title": ev.get("title", ""), "tag": ev.get("tag", ""),
-                "source": ev.get("source", "manual"), "state": ev.get("state", "todo"),
-                "until": ev.get("until"), "alert": False, "created": ev.get("ts"), "done_at": None,
+                "source": ev.get("source", "manual"),
+                "state": LEGACY_STATES.get(ev.get("state"), ev.get("state", "queued")),
+                "until": ev.get("until"), "title_locked": False,
+                "created": ev.get("ts"), "done_at": None,
             }
             order.insert(0, ev["id"])
-        elif op == "set" and task:
-            for key in ("title", "tag", "state", "until", "alert"):
+            if ev.get("tag") and ev["tag"] not in tags:
+                tags[ev["tag"]] = {"name": ev["tag"], "color": None, "used": ev.get("ts")}
+        elif op == "set" and dish:
+            for key in ("title", "tag", "until", "title_locked"):
                 if key in ev:
-                    task[key] = ev[key]
+                    dish[key] = ev[key]
             if "state" in ev:
-                task["done_at"] = ev["ts"] if ev["state"] == "done" else None
-        elif op == "move" and task:
+                dish["state"] = LEGACY_STATES.get(ev["state"], ev["state"])
+                dish["done_at"] = ev["ts"] if dish["state"] == "done" else None
+            if ev.get("alert") and dish["state"] == "waiting":
+                dish["state"] = "ready"
+            if ev.get("tag"):
+                tags.setdefault(ev["tag"], {"name": ev["tag"], "color": None})["used"] = ev.get("ts")
+        elif op == "move" and dish:
             order.remove(ev["id"])
             after = ev.get("after")
             order.insert(order.index(after) + 1 if after in order else 0, ev["id"])
-        elif op == "delete" and task:
-            del tasks[ev["id"]]
+        elif op == "delete" and dish:
+            del dishes[ev["id"]]
             order.remove(ev["id"])
-    return [tasks[i] for i in order if i in tasks]
+        elif op == "tag" and ev.get("name"):
+            tag = tags.setdefault(ev["name"], {"name": ev["name"], "color": None, "used": ev.get("ts")})
+            if ev.get("color"):
+                tag["color"] = ev["color"]
+        elif op == "wash":
+            washed_at = ev.get("ts")
+    for index, tag in enumerate(tags.values()):
+        tag["color"] = tag["color"] or PALETTE[index % len(PALETTE)]
+    return [dishes[i] for i in order if i in dishes], tags, washed_at
+
+
+def effective_state(dish):
+    """Return the state to show, turning an expired Waiting into Ready.
+
+    :param dish: folded dish
+    :return: state name
+    :rtype: str
+    """
+    if dish["state"] == "waiting" and dish.get("until"):
+        if parse_ts(dish["until"]) <= datetime.now().astimezone():
+            return "ready"
+    return dish["state"]
+
+
+def ensure_tag(name):
+    """Register a tag with the next palette color the first time it is used.
+
+    :param name: tag name, may be empty
+    :return: None
+    """
+    if not name:
+        return
+    _dishes, tags, _washed = fold()
+    if name not in tags:
+        append({"op": "tag", "name": name, "color": PALETTE[len(tags) % len(PALETTE)]})
 
 
 def parse_input(text):
@@ -118,19 +184,29 @@ def parse_input(text):
 
 
 def find(ref):
-    """Resolve a task from its 1-based position or id prefix.
+    """Resolve an active dish from its 1-based position or id prefix.
 
     :param ref: position in ``cook ls`` or id prefix
-    :return: matching active task
+    :return: matching active dish
     :rtype: dict
     """
-    active = [t for t in fold() if t["state"] != "done"]
+    active = [d for d in fold()[0] if d["state"] != "done"]
     if ref.isdigit() and 0 < int(ref) <= len(active):
         return active[int(ref) - 1]
-    matches = [t for t in active if t["id"].startswith(ref)]
+    matches = [d for d in active if d["id"].startswith(ref)]
     if len(matches) != 1:
-        sys.exit(f"cook: no single task matches '{ref}'")
+        sys.exit(f"cook: no single dish matches '{ref}'")
     return matches[0]
+
+
+def day_start(day):
+    """Return the moment a working day starts (4 a.m. local time).
+
+    :param day: calendar date
+    :return: aware datetime
+    :rtype: datetime
+    """
+    return datetime(day.year, day.month, day.day, DAY_START_HOUR).astimezone()
 
 
 def env_tag(cwd):
@@ -149,10 +225,40 @@ def env_tag(cwd):
     return re.sub(r"^odoo-", "", name)
 
 
+def claude_session_title(session_id):
+    """Read the title Claude Desktop gave a session, when it can be found.
+
+    :param session_id: Claude Code session id from the hook payload
+    :return: title or empty string
+    :rtype: str
+    """
+    for path in glob.glob(str(CLAUDE_SESSIONS / "*" / "*" / f"local_{session_id}.json")):
+        try:
+            title = json.loads(Path(path).read_text(encoding="utf-8")).get("title") or ""
+        except (OSError, ValueError):
+            continue
+        title = re.sub(r"\s*\(fork\)$", "", title).strip()
+        if title:
+            return title[:TITLE_MAX]
+    return ""
+
+
+def prompt_title(prompt):
+    """Build a dish title from the first meaningful line of a prompt.
+
+    :param prompt: raw prompt text, possibly starting with ``<tag>…</tag>`` blocks
+    :return: title
+    :rtype: str
+    """
+    text = re.sub(r"<([\w-]+)[^>]*>.*?</\1>", "", prompt, flags=re.S)
+    lines = [line.strip() for line in text.splitlines() if line.strip() and not line.strip().startswith("<")]
+    return lines[0] if lines else "Claude session"
+
+
 # ---- commands ---------------------------------------------------------------
 
 def cmd_add(args):
-    """Add a task from quick-entry text.
+    """Add a dish from quick-entry text.
 
     :param args: parsed arguments
     :return: None
@@ -160,87 +266,129 @@ def cmd_add(args):
     title, tag, wait = parse_input(" ".join(args.text))
     if not title:
         sys.exit("cook: empty title")
-    event = {"op": "add", "id": new_id(), "title": title, "tag": tag, "source": "manual", "state": "todo"}
-    if args.doing:
-        event["state"] = "doing"
+    ensure_tag(tag)
+    event = {"op": "add", "id": new_id(), "title": title, "tag": tag, "source": "manual", "state": "queued"}
+    if args.start:
+        event["state"] = "cooking"
     if wait:
-        event["state"] = "wait"
+        event["state"] = "waiting"
         event["until"] = now_iso(wait)
     append(event)
     print(event["id"])
 
 
 def cmd_ls(_args):
-    """Print active tasks.
+    """Print active dishes.
 
     :param _args: parsed arguments
     :return: None
     """
-    marks = {"todo": "○", "doing": "●", "wait": "◐"}
-    for pos, task in enumerate((t for t in fold() if t["state"] != "done"), 1):
-        tag = f"  #{task['tag']}" if task["tag"] else ""
-        flag = "  !" if task["alert"] else ""
-        print(f"{pos:>2} {marks.get(task['state'], '?')} {task['title']}{tag}{flag}")
+    active = [d for d in fold()[0] if d["state"] != "done"]
+    for pos, dish in enumerate(active, 1):
+        state = effective_state(dish)
+        tag = f"  #{dish['tag']}" if dish["tag"] else ""
+        print(f"{pos:>2} {MARKS.get(state, '?')} {dish['title']}{tag}  ({state})")
 
 
 def cmd_set_state(state):
-    """Build a command that sets the state of a task.
+    """Build a command that sets the state of a dish.
 
     :param state: target state
     :return: command function
     :rtype: callable
     """
     def run(args):
-        task = find(args.ref)
-        append({"op": "set", "id": task["id"], "state": state, "alert": False, "until": None})
+        dish = find(args.ref)
+        append({"op": "set", "id": dish["id"], "state": state, "until": None})
     return run
 
 
 def cmd_wait(args):
-    """Put a task in wait state for some minutes.
+    """Put a dish in Waiting for some minutes.
 
     :param args: parsed arguments
     :return: None
     """
-    task = find(args.ref)
-    until = now_iso(args.minutes)
-    append({"op": "set", "id": task["id"], "state": "wait", "until": until, "alert": False})
+    dish = find(args.ref)
+    append({"op": "set", "id": dish["id"], "state": "waiting", "until": now_iso(args.minutes)})
+
+
+def cmd_rename(args):
+    """Rename a dish; later Claude hooks will not overwrite the new title.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    dish = find(args.ref)
+    append({"op": "set", "id": dish["id"], "title": " ".join(args.title), "title_locked": True})
+
+
+def cmd_tag(args):
+    """Set or clear the tag of a dish.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    dish = find(args.ref)
+    name = (args.name or "").lstrip("#")
+    ensure_tag(name)
+    append({"op": "set", "id": dish["id"], "tag": name})
+
+
+def cmd_rm(args):
+    """Delete a dish without marking it done.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    append({"op": "delete", "id": find(args.ref)["id"]})
+
+
+def cmd_wash(_args):
+    """Empty the Dishwasher: hide the dishes done so far today.
+
+    :param _args: parsed arguments
+    :return: None
+    """
+    append({"op": "wash"})
 
 
 def cmd_log(args):
-    """Print tasks completed on a given day, grouped by tag.
+    """Print dishes done on a given working day, grouped by tag.
 
     :param args: parsed arguments
     :return: None
     """
     if args.day in (None, "today"):
-        day = date.today()
+        day = (datetime.now().astimezone() - timedelta(hours=DAY_START_HOUR)).date()
     elif args.day == "yesterday":
-        day = date.today() - timedelta(days=1)
+        day = (datetime.now().astimezone() - timedelta(hours=DAY_START_HOUR)).date() - timedelta(days=1)
     else:
         day = date.fromisoformat(args.day)
+    start, end = day_start(day), day_start(day + timedelta(days=1))
     groups = defaultdict(list)
-    for task in fold():
-        if task["state"] != "done" or not task["done_at"]:
+    for dish in fold()[0]:
+        if dish["state"] != "done" or not dish["done_at"]:
             continue
-        done = datetime.fromisoformat(task["done_at"].replace("Z", "+00:00")).astimezone()
-        if done.date() == day:
-            groups[task["tag"] or "(no tag)"].append((done, task))
+        done = parse_ts(dish["done_at"])
+        if start <= done < end:
+            groups[dish["tag"] or "(no tag)"].append((done, dish))
     if not groups:
-        print(f"No task done on {WEEKDAYS[day.weekday()]} {day:%Y-%m-%d}.")
+        print(f"No dish done on {WEEKDAYS[day.weekday()]} {day:%Y-%m-%d}.")
         return
     print(f"Done on {WEEKDAYS[day.weekday()]} {day:%Y-%m-%d}")
     for tag in sorted(groups):
         print(f"\n#{tag}")
-        for done, task in sorted(groups[tag], key=lambda item: item[0]):
-            print(f"  {done:%H:%M}  {task['title']}")
+        for done, dish in sorted(groups[tag], key=lambda item: item[0]):
+            print(f"  {done:%H:%M}  {dish['title']}")
 
 
 def cmd_hook(_args):
     """Translate a Claude Code hook payload (stdin) into journal events.
 
-    UserPromptSubmit creates or reopens the session task, Stop and
-    Notification flag it for attention. Never writes to stdout.
+    UserPromptSubmit creates or reopens the session dish in Waiting; Stop and
+    Notification move it to Ready. The title follows the Claude Desktop
+    session title unless the dish was renamed. Never writes to stdout.
 
     :param _args: parsed arguments
     :return: None
@@ -251,24 +399,27 @@ def cmd_hook(_args):
         session = payload.get("session_id")
         if not session:
             return
-        task_id = f"claude-{session}"
-        task = next((t for t in fold() if t["id"] == task_id), None)
+        dish_id = f"claude-{session}"
+        dish = next((d for d in fold()[0] if d["id"] == dish_id), None)
+        desktop_title = claude_session_title(session)
 
         if event_name == "UserPromptSubmit":
-            if not task:
-                prompt = (payload.get("prompt") or "").strip().splitlines()
-                title = prompt[0] if prompt else "Claude session"
+            if not dish:
+                title = desktop_title or prompt_title(payload.get("prompt") or "")
                 if len(title) > TITLE_MAX:
                     title = title[:TITLE_MAX - 1] + "…"
-                append({"op": "add", "id": task_id, "title": title, "tag": env_tag(payload.get("cwd")),
-                        "source": "claude", "state": "wait"})
-            else:
-                if task["state"] == "done":
-                    append({"op": "move", "id": task_id, "after": None})
-                append({"op": "set", "id": task_id, "state": "wait", "until": None, "alert": False})
-        elif event_name in ("Stop", "Notification") and task and task["state"] != "done":
-            if not task["alert"]:
-                append({"op": "set", "id": task_id, "alert": True})
+                tag = env_tag(payload.get("cwd"))
+                ensure_tag(tag)
+                append({"op": "add", "id": dish_id, "title": title, "tag": tag,
+                        "source": "claude", "state": "waiting"})
+                return
+            if dish["state"] == "done":
+                append({"op": "move", "id": dish_id, "after": None})
+            append({"op": "set", "id": dish_id, "state": "waiting", "until": None})
+        elif event_name in ("Stop", "Notification") and dish and dish["state"] == "waiting":
+            append({"op": "set", "id": dish_id, "state": "ready"})
+        if dish and desktop_title and not dish["title_locked"] and desktop_title != dish["title"]:
+            append({"op": "set", "id": dish_id, "title": desktop_title})
     except Exception as exc:  # a hook must never break the Claude session
         print(f"cook hook: {exc}", file=sys.stderr)
 
@@ -278,27 +429,43 @@ def main():
 
     :return: None
     """
-    parser = argparse.ArgumentParser(prog="cook", description="What's Cooking task list")
+    parser = argparse.ArgumentParser(prog="cook", description="What's Cooking dishes")
     sub = parser.add_subparsers(dest="cmd", required=True)
 
-    p = sub.add_parser("add", help="add a task: cook add 'Fix scan #clientA /w 20'")
+    p = sub.add_parser("add", help="add a dish: cook add 'Fix scan #acme /w 20'")
     p.add_argument("text", nargs="+")
-    p.add_argument("--doing", action="store_true", help="start as in progress")
+    p.add_argument("--start", action="store_true", help="start as Cooking")
     p.set_defaults(func=cmd_add)
 
-    sub.add_parser("ls", help="list active tasks").set_defaults(func=cmd_ls)
+    sub.add_parser("ls", help="list active dishes").set_defaults(func=cmd_ls)
 
-    for name, state in (("done", "done"), ("doing", "doing"), ("todo", "todo")):
-        p = sub.add_parser(name, help=f"mark task as {state}")
+    for name, state in (("queue", "queued"), ("start", "cooking"), ("done", "done")):
+        p = sub.add_parser(name, help=f"move a dish to {state.capitalize()}")
         p.add_argument("ref", help="position in ls or id prefix")
         p.set_defaults(func=cmd_set_state(state))
 
-    p = sub.add_parser("wait", help="wait N minutes before alerting")
+    p = sub.add_parser("wait", help="Waiting for N minutes, then Ready")
     p.add_argument("ref")
     p.add_argument("minutes", type=int)
     p.set_defaults(func=cmd_wait)
 
-    p = sub.add_parser("log", help="tasks done on a day (today, yesterday, YYYY-MM-DD)")
+    p = sub.add_parser("rename", help="rename a dish")
+    p.add_argument("ref")
+    p.add_argument("title", nargs="+")
+    p.set_defaults(func=cmd_rename)
+
+    p = sub.add_parser("tag", help="set a dish tag (no name = clear it)")
+    p.add_argument("ref")
+    p.add_argument("name", nargs="?")
+    p.set_defaults(func=cmd_tag)
+
+    p = sub.add_parser("rm", help="delete a dish without marking it done")
+    p.add_argument("ref")
+    p.set_defaults(func=cmd_rm)
+
+    sub.add_parser("wash", help="empty the Dishwasher").set_defaults(func=cmd_wash)
+
+    p = sub.add_parser("log", help="dishes done on a day (today, yesterday, YYYY-MM-DD)")
     p.add_argument("day", nargs="?")
     p.set_defaults(func=cmd_log)
 
