@@ -1,4 +1,4 @@
-WIN='global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === "What'"'"'s Cooking")'
+WIN='global.get_window_actors().map(a => a.meta_window).find(w => w.get_wm_class() === "whats-cooking")'
 rect() { ev "const w = $WIN; w ? (() => { const r = w.get_frame_rect(); return r.x + ' ' + r.y + ' ' + r.width + ' ' + r.height + ' op=' + w.get_compositor_private().opacity; })() : 'none'" | sed -E "s/^\(true, '\"?//; s/\"?'\)$//"; }
 btn() { read -r X Y W H _ <<< "$(rect)"; echo "$((X + W - $1)) $((Y + 27))"; }   # $1 = offset from right edge
 move 1100 300; sleep 0.5

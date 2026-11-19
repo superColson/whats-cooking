@@ -1,4 +1,4 @@
-WIN='global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === "What'"'"'s Cooking")'
+WIN='global.get_window_actors().map(a => a.meta_window).find(w => w.get_wm_class() === "whats-cooking")'
 ev "JSON.stringify(global.display.get_tab_list(imports.gi.Meta.TabList.NORMAL, null).map(w => w.get_title()))" > "$OUT/tablist.txt"
 ev "JSON.stringify(imports.gi.Shell.AppSystem.get_default().get_running().map(a => a.get_id()))" > "$OUT/running.txt"
 ev "const w = $WIN; w.move_frame(true, 600, 200); 'ok'" >/dev/null; sleep 1.5

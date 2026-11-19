@@ -64,7 +64,7 @@ WAYLAND_DISPLAY=cook-v1-0 GDK_BACKEND=wayland WEBKIT_DISABLE_DMABUF_RENDERER=1 D
 APP_PID=$!
 for _ in $(seq 30); do ev 'global.get_window_actors().length' | grep -q "'[1-9]" && break; sleep 1; done
 sleep 4
-ev 'const w = global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === "What'"'"'s Cooking"); const r = w.get_frame_rect(), b = w.get_buffer_rect(); JSON.stringify({frame: [r.x, r.y, r.width, r.height], buffer: [b.x, b.y, b.width, b.height], above: w.is_above()})' > "$OUT/window.txt"
+ev 'const w = global.get_window_actors().map(a => a.meta_window).find(w => w.get_wm_class() === "whats-cooking"); const r = w.get_frame_rect(), b = w.get_buffer_rect(); JSON.stringify({frame: [r.x, r.y, r.width, r.height], buffer: [b.x, b.y, b.width, b.height], above: w.is_above()})' > "$OUT/window.txt"
 shot 0-start
 [ -n "$STEPS" ] && source "$STEPS"
 "$C" ls > "$OUT/ls.txt"

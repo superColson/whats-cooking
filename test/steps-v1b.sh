@@ -15,5 +15,5 @@ click $((X0+300)) 60                             # expand
 move $((X0+313)) 500; ev "$DEV global._pt.notify_button(t(), 1, 1);" >/dev/null; sleep 0.3
 for y in 540 600 660; do move $((X0+313)) $y; done
 ev "$DEV global._pt.notify_button(t(), 1, 0);" >/dev/null; sleep 0.8
-ev 'const w = global.get_window_actors().map(a => a.meta_window).find(w => w.get_title() === "What'"'"'s Cooking"); const r = w.get_frame_rect(); `${r.x},${r.y},${r.width},${r.height}`' > "$OUT/resized.txt"
+ev 'const w = global.get_window_actors().map(a => a.meta_window).find(w => w.get_wm_class() === "whats-cooking"); const r = w.get_frame_rect(); `${r.x},${r.y},${r.width},${r.height}`' > "$OUT/resized.txt"
 shot 10-resized

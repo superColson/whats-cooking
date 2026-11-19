@@ -13,11 +13,15 @@ const MIN_H = 420;
 const MAX_W = 640;
 const MAX_H = 1260;
 const SCREEN_MARGIN = 64;
+const EXPANDED_W_RATIO = 0.9;
+const EXPANDED_H_RATIO = 0.7;
+const RESIZE_MS = 220;
+const APP_TITLE = "What's cooking\u00a0?";
 const DAY_MS = 86400e3;
 
 const $ = id => document.getElementById(id);
 const els = {
-  card: $('card'), head: $('head'), badge: $('badge'), entry: $('entry'), suggest: $('suggest'),
+  card: $('card'), head: $('head'), count: $('count'), badge: $('badge'), entry: $('entry'), suggest: $('suggest'),
   list: $('list'), washer: $('washer'), washerTitle: $('washer-title'), washerList: $('washer-list'),
   popover: $('popover'),
 };
@@ -28,6 +32,7 @@ let busy = 0;           // > 0 while the user edits, drags or has a popover open
 let pointerDown = false;
 let renderPending = false;
 let trayCount = -1;
+let resizing = false;
 const readyEmitted = new Set();
 const prefs = loadPrefs();
 
@@ -175,7 +180,8 @@ function render() {
   const active = kitchen.dishes.filter(d => d.state !== 'done');
   const ready = active.filter(d => d.state === 'ready').length;
 
-  els.head.textContent = `Cooking · ${active.length}`;
+  els.head.textContent = APP_TITLE;
+  els.count.textContent = String(active.length);
   els.badge.hidden = !ready;
   els.badge.textContent = `${ready} ready`;
   if (active.length !== trayCount) {
@@ -555,36 +561,73 @@ window.Sortable.create(els.list, {
 
 $('hide').onclick = () => appWindow.hide();
 /**
- * Largest card size allowed by the config and the current screen.
+ * Size of the expanded card: a share of the largest size the screen allows.
  *
  * @returns {Promise<{width: number, height: number}>}
  */
-async function maxSize() {
+async function expandedSize() {
   const monitor = await tauri.window.currentMonitor();
-  if (!monitor) return {width: MAX_W, height: MAX_H};
-  const screen = (monitor.workArea?.size ?? monitor.size).toLogical(monitor.scaleFactor);
-  return {width: Math.min(MAX_W, screen.width - SCREEN_MARGIN), height: Math.min(MAX_H, screen.height - SCREEN_MARGIN)};
+  let width = MAX_W;
+  let height = MAX_H;
+  if (monitor) {
+    const screen = (monitor.workArea?.size ?? monitor.size).toLogical(monitor.scaleFactor);
+    width = Math.min(MAX_W, screen.width - SCREEN_MARGIN);
+    height = Math.min(MAX_H, screen.height - SCREEN_MARGIN);
+  }
+  return {
+    width: Math.max(MIN_W, Math.round(width * EXPANDED_W_RATIO)),
+    height: Math.max(MIN_H, Math.round(height * EXPANDED_H_RATIO)),
+  };
 }
 
 /**
- * Show the shrink icon at maximum size, the grow icon otherwise.
+ * Return the current inner size of the window in logical pixels.
+ *
+ * @returns {Promise<{width: number, height: number}>}
+ */
+async function currentSize() {
+  return (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
+}
+
+/**
+ * Show the shrink icon when expanded, the grow icon otherwise.
  */
 async function syncSizeButton() {
-  const size = (await appWindow.innerSize()).toLogical(await appWindow.scaleFactor());
-  const max = await maxSize();
-  const maxed = size.width >= max.width - 8 && size.height >= max.height - 8;
-  els.card.classList.toggle('maxed', maxed);
-  $('size').title = maxed ? 'Shrink to minimum size' : 'Grow to maximum size';
+  if (resizing) return;
+  const size = await currentSize();
+  const target = await expandedSize();
+  const expanded = size.width >= target.width - 8 && size.height >= target.height - 8;
+  els.card.classList.toggle('maxed', expanded);
+  $('size').title = expanded ? 'Shrink to compact size' : 'Expand';
+}
+
+/**
+ * Resize the window to a target size with an ease-out animation.
+ *
+ * @param {{width: number, height: number}} target logical size
+ */
+async function animateSize(target) {
+  resizing = true;
+  const from = await currentSize();
+  const start = performance.now();
+  for (;;) {
+    const t = Math.min(1, (performance.now() - start) / RESIZE_MS);
+    const k = 1 - (1 - t) ** 3;
+    await appWindow.setSize(new LogicalSize(
+      Math.round(from.width + (target.width - from.width) * k),
+      Math.round(from.height + (target.height - from.height) * k)));
+    if (t >= 1) break;
+    await new Promise(requestAnimationFrame);
+  }
+  resizing = false;
+  syncSizeButton();
 }
 
 $('size').onclick = async () => {
-  if (els.card.classList.contains('maxed')) {
-    await appWindow.setSize(new LogicalSize(MIN_W, MIN_H));
-  } else {
-    const max = await maxSize();
-    await appWindow.setSize(new LogicalSize(max.width, max.height));
-  }
-  setTimeout(syncSizeButton, 150);
+  if (resizing) return;
+  const expanded = els.card.classList.contains('maxed');
+  els.card.classList.toggle('maxed', !expanded);
+  await animateSize(expanded ? {width: MIN_W, height: MIN_H} : await expandedSize());
 };
 appWindow.onResized(() => syncSizeButton());
 $('washer-toggle').onclick = () => {

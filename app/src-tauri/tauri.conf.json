@@ -10,7 +10,7 @@
     "windows": [
       {
         "label": "main",
-        "title": "What's Cooking",
+        "title": "What's cooking ?",
         "width": 320,
         "height": 420,
         "resizable": true,

@@ -6,7 +6,7 @@ import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const APP_IDS = ['io.github.supercolson.whatscooking', 'whats-cooking'];
-const TITLE = "What's Cooking";
+const TITLES = ["What's cooking ?", "What's Cooking"];
 const LAUNCH = ['whats-cooking', '--show'];
 const MARGIN = 16;
 const PLACE_DELAY_MS = 250;
@@ -22,7 +22,7 @@ const POSITION_FILE = GLib.build_filenamev([GLib.get_user_data_dir(), 'whats-coo
  * @returns {boolean}
  */
 function isOurs(win) {
-    return !!win && (APP_IDS.includes(win.get_wm_class()) || win.get_title() === TITLE);
+    return !!win && (APP_IDS.includes(win.get_wm_class()) || TITLES.includes(win.get_title()));
 }
 
 export default class WhatsCookingPinExtension extends Extension {
