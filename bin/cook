@@ -1,0 +1,312 @@
+#!/usr/bin/env python3
+"""Command-line companion of the What's Cooking GNOME Shell extension.
+
+Every command appends events to ``$XDG_DATA_HOME/whats-cooking/journal.jsonl``;
+the extension watches that file and refreshes itself.
+"""
+import argparse
+import json
+import os
+import random
+import re
+import sys
+import time
+from collections import defaultdict
+from datetime import date, datetime, timedelta, timezone
+from pathlib import Path
+
+DATA_DIR = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share") / "whats-cooking"
+JOURNAL = DATA_DIR / "journal.jsonl"
+TITLE_MAX = 70
+WEEKDAYS = ("lundi", "mardi", "mercredi", "jeudi", "vendredi", "samedi", "dimanche")
+
+
+def now_iso(minutes=0):
+    """Return a UTC time in ISO 8601 with milliseconds.
+
+    :param minutes: offset from now
+    :return: timestamp string ending with ``Z``
+    :rtype: str
+    """
+    moment = datetime.now(timezone.utc) + timedelta(minutes=minutes)
+    return moment.isoformat(timespec="milliseconds").replace("+00:00", "Z")
+
+
+def new_id():
+    """Return a short unique task id.
+
+    :return: base-36 id
+    :rtype: str
+    """
+    def b36(n):
+        digits = "0123456789abcdefghijklmnopqrstuvwxyz"
+        out = ""
+        while n:
+            n, r = divmod(n, 36)
+            out = digits[r] + out
+        return out or "0"
+
+    return b36(int(time.time() * 1000)) + b36(random.randrange(10**6))
+
+
+def append(event):
+    """Append one event to the journal.
+
+    :param event: event payload, ``ts`` is added
+    :return: None
+    """
+    DATA_DIR.mkdir(parents=True, exist_ok=True)
+    line = json.dumps({"ts": now_iso(), **event}, ensure_ascii=False) + "\n"
+    with open(JOURNAL, "a", encoding="utf-8") as fh:
+        fh.write(line)
+
+
+def fold():
+    """Replay the journal into the ordered task list.
+
+    :return: tasks in display order, done ones included
+    :rtype: list[dict]
+    """
+    tasks, order = {}, []
+    if not JOURNAL.exists():
+        return []
+    for line in JOURNAL.read_text(encoding="utf-8").splitlines():
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        task = tasks.get(ev.get("id"))
+        op = ev.get("op")
+        if op == "add" and not task:
+            tasks[ev["id"]] = {
+                "id": ev["id"], "title": ev.get("title", ""), "tag": ev.get("tag", ""),
+                "source": ev.get("source", "manual"), "state": ev.get("state", "todo"),
+                "until": ev.get("until"), "alert": False, "created": ev.get("ts"), "done_at": None,
+            }
+            order.insert(0, ev["id"])
+        elif op == "set" and task:
+            for key in ("title", "tag", "state", "until", "alert"):
+                if key in ev:
+                    task[key] = ev[key]
+            if "state" in ev:
+                task["done_at"] = ev["ts"] if ev["state"] == "done" else None
+        elif op == "move" and task:
+            order.remove(ev["id"])
+            after = ev.get("after")
+            order.insert(order.index(after) + 1 if after in order else 0, ev["id"])
+        elif op == "delete" and task:
+            del tasks[ev["id"]]
+            order.remove(ev["id"])
+    return [tasks[i] for i in order if i in tasks]
+
+
+def parse_input(text):
+    """Split quick-entry text into title, tag and wait minutes.
+
+    :param text: e.g. ``Restore backup #clientA /w 20``
+    :return: ``(title, tag, wait_minutes or None)``
+    :rtype: tuple
+    """
+    wait = None
+    match = re.search(r"/w\s*(\d+)", text, re.I)
+    if match:
+        wait = int(match.group(1))
+        text = text[:match.start()] + text[match.end():]
+    tags = re.findall(r"#([\w-]+)", text)
+    text = re.sub(r"#[\w-]+", "", text)
+    return " ".join(text.split()), (tags[0] if tags else ""), wait
+
+
+def find(ref):
+    """Resolve a task from its 1-based position or id prefix.
+
+    :param ref: position in ``cook ls`` or id prefix
+    :return: matching active task
+    :rtype: dict
+    """
+    active = [t for t in fold() if t["state"] != "done"]
+    if ref.isdigit() and 0 < int(ref) <= len(active):
+        return active[int(ref) - 1]
+    matches = [t for t in active if t["id"].startswith(ref)]
+    if len(matches) != 1:
+        sys.exit(f"cook: no single task matches '{ref}'")
+    return matches[0]
+
+
+def env_tag(cwd):
+    """Derive a short project tag from a working directory.
+
+    :param cwd: absolute path of the Claude session
+    :return: tag such as ``acme``
+    :rtype: str
+    """
+    parts = Path(cwd or "").parts
+    if ".claude" in parts:
+        parts = parts[:parts.index(".claude")]
+    if any(p.startswith("scratch-workspaces") for p in parts):
+        return "scratch"
+    name = parts[-1] if parts else ""
+    return re.sub(r"^odoo-", "", name)
+
+
+# ---- commands ---------------------------------------------------------------
+
+def cmd_add(args):
+    """Add a task from quick-entry text.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    title, tag, wait = parse_input(" ".join(args.text))
+    if not title:
+        sys.exit("cook: empty title")
+    event = {"op": "add", "id": new_id(), "title": title, "tag": tag, "source": "manual", "state": "todo"}
+    if args.doing:
+        event["state"] = "doing"
+    if wait:
+        event["state"] = "wait"
+        event["until"] = now_iso(wait)
+    append(event)
+    print(event["id"])
+
+
+def cmd_ls(_args):
+    """Print active tasks.
+
+    :param _args: parsed arguments
+    :return: None
+    """
+    marks = {"todo": "○", "doing": "●", "wait": "◐"}
+    for pos, task in enumerate((t for t in fold() if t["state"] != "done"), 1):
+        tag = f"  #{task['tag']}" if task["tag"] else ""
+        flag = "  !" if task["alert"] else ""
+        print(f"{pos:>2} {marks.get(task['state'], '?')} {task['title']}{tag}{flag}")
+
+
+def cmd_set_state(state):
+    """Build a command that sets the state of a task.
+
+    :param state: target state
+    :return: command function
+    :rtype: callable
+    """
+    def run(args):
+        task = find(args.ref)
+        append({"op": "set", "id": task["id"], "state": state, "alert": False, "until": None})
+    return run
+
+
+def cmd_wait(args):
+    """Put a task in wait state for some minutes.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    task = find(args.ref)
+    until = now_iso(args.minutes)
+    append({"op": "set", "id": task["id"], "state": "wait", "until": until, "alert": False})
+
+
+def cmd_log(args):
+    """Print tasks completed on a given day, grouped by tag.
+
+    :param args: parsed arguments
+    :return: None
+    """
+    if args.day in (None, "today"):
+        day = date.today()
+    elif args.day == "yesterday":
+        day = date.today() - timedelta(days=1)
+    else:
+        day = date.fromisoformat(args.day)
+    groups = defaultdict(list)
+    for task in fold():
+        if task["state"] != "done" or not task["done_at"]:
+            continue
+        done = datetime.fromisoformat(task["done_at"].replace("Z", "+00:00")).astimezone()
+        if done.date() == day:
+            groups[task["tag"] or "(sans tag)"].append((done, task))
+    if not groups:
+        print(f"Aucune tâche terminée le {day:%d/%m/%Y}.")
+        return
+    print(f"Terminées le {WEEKDAYS[day.weekday()]} {day:%d/%m/%Y}")
+    for tag in sorted(groups):
+        print(f"\n#{tag}")
+        for done, task in sorted(groups[tag], key=lambda item: item[0]):
+            print(f"  {done:%H:%M}  {task['title']}")
+
+
+def cmd_hook(_args):
+    """Translate a Claude Code hook payload (stdin) into journal events.
+
+    UserPromptSubmit creates or reopens the session task, Stop and
+    Notification flag it for attention. Never writes to stdout.
+
+    :param _args: parsed arguments
+    :return: None
+    """
+    try:
+        payload = json.load(sys.stdin)
+        event_name = payload.get("hook_event_name")
+        session = payload.get("session_id")
+        if not session:
+            return
+        task_id = f"claude-{session}"
+        task = next((t for t in fold() if t["id"] == task_id), None)
+
+        if event_name == "UserPromptSubmit":
+            if not task:
+                prompt = (payload.get("prompt") or "").strip().splitlines()
+                title = prompt[0] if prompt else "Session Claude"
+                if len(title) > TITLE_MAX:
+                    title = title[:TITLE_MAX - 1] + "…"
+                append({"op": "add", "id": task_id, "title": title, "tag": env_tag(payload.get("cwd")),
+                        "source": "claude", "state": "wait"})
+            else:
+                if task["state"] == "done":
+                    append({"op": "move", "id": task_id, "after": None})
+                append({"op": "set", "id": task_id, "state": "wait", "until": None, "alert": False})
+        elif event_name in ("Stop", "Notification") and task and task["state"] != "done":
+            if not task["alert"]:
+                append({"op": "set", "id": task_id, "alert": True})
+    except Exception as exc:  # a hook must never break the Claude session
+        print(f"cook hook: {exc}", file=sys.stderr)
+
+
+def main():
+    """Parse arguments and dispatch to the command.
+
+    :return: None
+    """
+    parser = argparse.ArgumentParser(prog="cook", description="What's Cooking task list")
+    sub = parser.add_subparsers(dest="cmd", required=True)
+
+    p = sub.add_parser("add", help="add a task: cook add 'Fix scan #clientA /w 20'")
+    p.add_argument("text", nargs="+")
+    p.add_argument("--doing", action="store_true", help="start as in progress")
+    p.set_defaults(func=cmd_add)
+
+    sub.add_parser("ls", help="list active tasks").set_defaults(func=cmd_ls)
+
+    for name, state in (("done", "done"), ("doing", "doing"), ("todo", "todo")):
+        p = sub.add_parser(name, help=f"mark task as {state}")
+        p.add_argument("ref", help="position in ls or id prefix")
+        p.set_defaults(func=cmd_set_state(state))
+
+    p = sub.add_parser("wait", help="wait N minutes before alerting")
+    p.add_argument("ref")
+    p.add_argument("minutes", type=int)
+    p.set_defaults(func=cmd_wait)
+
+    p = sub.add_parser("log", help="tasks done on a day (today, yesterday, YYYY-MM-DD)")
+    p.add_argument("day", nargs="?")
+    p.set_defaults(func=cmd_log)
+
+    sub.add_parser("hook", help="Claude Code hook entry point (reads stdin)").set_defaults(func=cmd_hook)
+
+    args = parser.parse_args()
+    args.func(args)
+
+
+if __name__ == "__main__":
+    main()

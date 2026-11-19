@@ -1,0 +1,1 @@
+{"uuid": "helper@localhost", "name": "What's Cooking test helper", "description": "Enables unsafe mode so the test can take screenshots.", "shell-version": ["46", "47", "48", "49", "50"]}

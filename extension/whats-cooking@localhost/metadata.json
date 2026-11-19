@@ -1,0 +1,7 @@
+{
+  "uuid": "whats-cooking@localhost",
+  "name": "What's Cooking",
+  "description": "Floating always-on-top task list with wait timers, fed by a local journal file.",
+  "shell-version": ["46", "47", "48", "49", "50"],
+  "version": 1
+}
