@@ -1,53 +1,60 @@
-# What's Cooking — POC
+# What's Cooking
 
-Post-it flottant (extension GNOME Shell, Wayland natif) listant les tâches « sur le feu ».
+Liste flottante, toujours au premier plan, des sujets « sur le feu ». Une Card par-dessus les fenêtres, des Timers qui préviennent quand une attente est finie, et l'historique de la journée pour remplir ses timesheets.
 
-## Principe
+- **App Tauri 2** (`app/`) : la Card, en HTML/CSS/JS.
+- **CLI `cook`** (`bin/cook`) : la même liste depuis le terminal, et le point d'entrée des hooks Claude Code.
+- **Extension GNOME `whats-cooking-pin`** (`gnome-helper/`) : sous GNOME (Wayland compris), garde la Card au premier plan sur tous les espaces de travail, mémorise sa position, la retire d'Alt+Tab et du dock, et ajoute le raccourci `Super+Shift+C`.
 
-Tout passe par un journal append-only : `~/.local/share/whats-cooking/journal.jsonl`.
-L'extension, la CLI et les hooks Claude y ajoutent des événements (`add`, `set`, `move`) ;
-l'extension surveille le fichier et se redessine. Pas de démon, l'historique sert de base aux timesheets.
+Tout passe par un journal append-only partagé : `~/.local/share/whats-cooking/journal.jsonl`.
 
 ## Installation
 
+Prérequis : Rust (rustup), Node.js, WebKitGTK 4.1 (Ubuntu : `libwebkit2gtk-4.1-dev`), `jq`.
+
 ```bash
-./install.sh                # copie extension + CLI (~/.local/bin/cook), active l'extension
-./install.sh --dev          # liens symboliques vers le repo : modifs prises au redémarrage du shell
-./install.sh --hooks        # + hooks Claude Code (sauvegarde settings.json avant)
-./install.sh --dev --hooks  # combinable
+./install.sh                # build release, installe app + CLI + lanceur + autostart + extension
+./install.sh --dev          # build debug, liens symboliques vers le repo (CLI, extension)
+./install.sh --hooks        # + hooks Claude Code (settings.json sauvegardé avant)
 ```
 
-Puis redémarrer GNOME Shell — X11 : `Alt+F2` → `r`. Wayland : déconnexion/reconnexion.
+Puis redémarrer GNOME Shell (X11 : `Alt+F2` → `r` ; Wayland : déconnexion) et lancer `whats-cooking &`. L'app démarre ensuite seule à chaque login.
 
 ## Désinstallation
 
 ```bash
-./uninstall.sh          # retire extension, CLI, hooks Claude ; garde ~/.local/share/whats-cooking
-./uninstall.sh --purge  # supprime aussi tâches et historique
+./uninstall.sh          # retire tout, garde les Dishes et l'historique
+./uninstall.sh --purge  # supprime aussi les données
 ```
 
 ## Utilisation
 
-| Action | Comment |
-|---|---|
-| Ajouter | champ de saisie ou `cook add "Titre #tag /w 20"` |
-| État | clic sur la pastille : à faire ⇄ en cours (une tâche en attente repasse en cours) |
-| Attendre | clic sur l'horloge = +10 min, molette = ±5 min, clic droit = annuler |
-| Terminer | coche (ou `cook done <n°>`) |
-| Réordonner | glisser la poignée ⠿ |
-| Déplacer / réduire / masquer | glisser l'en-tête, `^`, `×` ; l'icône de la barre du haut réaffiche |
-| Journal du jour | `cook log` / `cook log yesterday` / `cook log 2026-11-18` |
+| Action | Card | CLI |
+|---|---|---|
+| Ajouter | Quick entry : `Titre #tag /w 20` (`#` propose les Tags existants) | `cook add "Titre #tag /w 20"` (`--start` = Cooking) |
+| Queued ⇄ Cooking | clic sur la pastille | `cook queue <n>` / `cook start <n>` |
+| Timer (Waiting → Ready) | horloge : clic +5 min, molette ±1 min, clic droit annule | `cook wait <n> <min>` |
+| Terminer | coche (le Dish part au Dishwasher) | `cook done <n>` |
+| Renommer | double-clic sur le titre | `cook rename <n> nouveau titre` |
+| Tag | clic sur le badge : choisir, créer, retirer, changer la couleur | `cook tag <n> nom` |
+| Supprimer | × deux fois | `cook rm <n>` |
+| Réordonner | glisser la poignée | — |
+| Dishwasher | section du bas : Dishes Done depuis 4 h, clic = ressortir | `cook wash` (vider) |
+| Journée | — | `cook log` / `cook log yesterday` / `cook log 2026-11-18` |
 
-## Sessions Claude (hooks)
+États : **Queued** · **Cooking** · **Waiting** · **Ready** · **Done**. La Card se redimensionne par le coin bas-droit, se réduit avec `^`, se masque avec `×` (icône de la barre système ou `Super+Shift+C` pour la ré-afficher).
 
-- `UserPromptSubmit` : crée la tâche de la session (titre = 1re ligne du prompt, tag = nom du dossier sans `odoo-`) ou la rouvre si elle était terminée → « Claude travaille… ».
-- `Stop` / `Notification` : la tâche clignote → « à relire ».
-- Clic sur la pastille → en cours, le clignotement s'arrête.
+## Sessions Claude
 
-## Test
+Avec `--hooks`, chaque session Claude Code devient un Dish (Tag = dossier du projet) :
 
-`test/run-headless.sh` lance un GNOME Shell headless Wayland isolé (dossiers XDG temporaires),
-injecte des tâches, simule clics/saisie/glisser et dépose des captures dans `test/out/`.
+- prompt envoyé → **Waiting** « Claude working… » ;
+- fin de tour ou demande de permission → **Ready** « to review » ;
+- titre = titre de la session Claude Desktop quand il est connu, sinon la 1re ligne du prompt ; un Dish renommé à la main garde son titre.
+
+## Tests
+
+`test/run-v1-headless.sh [steps]` lance un GNOME Shell headless Wayland isolé avec l'app et des données d'exemple, joue éventuellement un scénario (`test/steps-v1*.sh`) et dépose captures et journal dans `test/out-v1/`.
 
 ## Licence
 
