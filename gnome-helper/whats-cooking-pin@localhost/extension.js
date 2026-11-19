@@ -1,44 +1,110 @@
 import GLib from 'gi://GLib';
+import Meta from 'gi://Meta';
+import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
 import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 const APP_IDS = ['io.github.supercolson.whatscooking', 'whats-cooking'];
 const TITLE = "What's Cooking";
+const LAUNCH = ['whats-cooking', '--show'];
 const MARGIN = 16;
 const PLACE_DELAY_MS = 250;
 const PLACE_TRIES = 20;
+const SAVE_DELAY_MS = 500;
+const POSITION_FILE = GLib.build_filenamev([GLib.get_user_data_dir(), 'whats-cooking', 'window-position.json']);
+
+/**
+ * Tell whether a window belongs to the What's Cooking app.
+ *
+ * @param {Meta.Window} win
+ * @returns {boolean}
+ */
+function isOurs(win) {
+    return !!win && (APP_IDS.includes(win.get_wm_class()) || win.get_title() === TITLE);
+}
 
 export default class WhatsCookingPinExtension extends Extension {
     /**
-     * Watch new windows and pin the ones that already exist.
+     * Watch windows, hide ours from window lists and bind the shortcut.
      */
     enable() {
         this._pinned = new WeakSet();
+        this._focusNext = false;
+        this._saveId = null;
         this._windowCreatedId = global.display.connect('window-created',
             (_display, win) => this._watch(win));
         for (const actor of global.get_window_actors())
             this._watch(actor.meta_window);
+        this._patchWindowLists();
+        Main.wm.addKeybinding('toggle-card', this.getSettings(), Meta.KeyBindingFlags.NONE,
+            Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, () => this._showCard());
     }
 
     /**
-     * Stop watching windows.
+     * Undo everything enable() did.
      */
     disable() {
+        Main.wm.removeKeybinding('toggle-card');
+        this._unpatchWindowLists();
         global.display.disconnect(this._windowCreatedId);
-        this._windowCreatedId = null;
+        if (this._saveId)
+            GLib.source_remove(this._saveId);
+        this._windowCreatedId = this._saveId = null;
         this._pinned = null;
     }
 
+    // ---- shortcut -----------------------------------------------------------
+
     /**
-     * Tell whether a window belongs to the What's Cooking app.
-     *
-     * @param {Meta.Window} win
-     * @returns {boolean}
+     * Focus the card; launch or unhide it through the app when it is not mapped.
      */
-    _isOurs(win) {
-        return APP_IDS.includes(win.get_wm_class()) || win.get_title() === TITLE;
+    _showCard() {
+        const win = global.get_window_actors().map(a => a.meta_window).find(isOurs);
+        if (win) {
+            win.activate(global.get_current_time());
+            return;
+        }
+        this._focusNext = true;
+        try {
+            GLib.spawn_async(null, LAUNCH, null, GLib.SpawnFlags.SEARCH_PATH, null);
+        } catch (e) {
+            console.error(`whats-cooking-pin: cannot launch the app: ${e.message}`);
+        }
     }
+
+    // ---- Alt+Tab and dock ---------------------------------------------------
+
+    /**
+     * Keep the card out of Alt+Tab and of the running apps shown in the dock.
+     *
+     * Wayland ignores the app's own "skip taskbar" hint, so the lists that the
+     * shell builds in JavaScript are filtered here instead.
+     */
+    _patchWindowLists() {
+        const display = Meta.Display.prototype;
+        const appSystem = Shell.AppSystem.prototype;
+        this._origTabList = display.get_tab_list;
+        this._origRunning = appSystem.get_running;
+        const origTabList = this._origTabList;
+        const origRunning = this._origRunning;
+        display.get_tab_list = function (type, workspace) {
+            return origTabList.call(this, type, workspace).filter(w => !isOurs(w));
+        };
+        appSystem.get_running = function () {
+            return origRunning.call(this).filter(app => !app.get_windows().some(isOurs));
+        };
+    }
+
+    /**
+     * Restore the shell functions patched by _patchWindowLists().
+     */
+    _unpatchWindowLists() {
+        Meta.Display.prototype.get_tab_list = this._origTabList;
+        Shell.AppSystem.prototype.get_running = this._origRunning;
+    }
+
+    // ---- pinning and position -----------------------------------------------
 
     /**
      * Pin a window now, or as soon as its app id or title is known.
@@ -60,13 +126,13 @@ export default class WhatsCookingPinExtension extends Extension {
     }
 
     /**
-     * Keep the window above others, on all workspaces, at the top right.
+     * Keep the window above others, on all workspaces, at its saved position.
      *
      * @param {Meta.Window} win
      * @returns {boolean} true when the window was ours and is now pinned
      */
     _tryPin(win) {
-        if (!this._pinned || this._pinned.has(win) || !this._isOurs(win))
+        if (!this._pinned || this._pinned.has(win) || !isOurs(win))
             return false;
         this._pinned.add(win);
         win.make_above();
@@ -75,22 +141,69 @@ export default class WhatsCookingPinExtension extends Extension {
         let tries = 0;
         GLib.timeout_add(GLib.PRIORITY_DEFAULT, PLACE_DELAY_MS, () => {
             const mapped = win.get_compositor_private()?.visible && win.get_frame_rect().width > 0;
-            if (mapped)
+            if (mapped) {
                 this._place(win);
+                win.connect('position-changed', () => this._scheduleSave(win));
+                if (this._focusNext) {
+                    this._focusNext = false;
+                    win.activate(global.get_current_time());
+                }
+            }
             return !mapped && ++tries < PLACE_TRIES ? GLib.SOURCE_CONTINUE : GLib.SOURCE_REMOVE;
         });
-        console.log(`whats-cooking-pin: pinned "${win.get_title()}" (${win.get_wm_class()})`);
         return true;
     }
 
     /**
-     * Move the window to the top right corner of the primary monitor work area.
+     * Move the window to its saved position, or to the top right corner.
      *
      * @param {Meta.Window} win
      */
     _place(win) {
         const area = Main.layoutManager.getWorkAreaForMonitor(Main.layoutManager.primaryIndex);
         const rect = win.get_frame_rect();
-        win.move_frame(true, area.x + area.width - rect.width - MARGIN, area.y + MARGIN);
+        const saved = this._loadPosition();
+        let x = area.x + area.width - rect.width - MARGIN;
+        let y = area.y + MARGIN;
+        if (saved) {
+            x = Math.min(Math.max(saved.x, area.x), area.x + area.width - rect.width);
+            y = Math.min(Math.max(saved.y, area.y), area.y + area.height - 40);
+        }
+        win.move_frame(true, x, y);
+    }
+
+    /**
+     * Save the window position shortly after it stops moving.
+     *
+     * @param {Meta.Window} win
+     */
+    _scheduleSave(win) {
+        if (this._saveId)
+            GLib.source_remove(this._saveId);
+        this._saveId = GLib.timeout_add(GLib.PRIORITY_DEFAULT, SAVE_DELAY_MS, () => {
+            this._saveId = null;
+            const rect = win.get_frame_rect();
+            try {
+                GLib.mkdir_with_parents(GLib.path_get_dirname(POSITION_FILE), 0o755);
+                GLib.file_set_contents(POSITION_FILE, JSON.stringify({x: rect.x, y: rect.y}));
+            } catch (e) {
+                console.error(`whats-cooking-pin: cannot save position: ${e.message}`);
+            }
+            return GLib.SOURCE_REMOVE;
+        });
+    }
+
+    /**
+     * Read the saved window position.
+     *
+     * @returns {{x: number, y: number}|null}
+     */
+    _loadPosition() {
+        try {
+            const [ok, bytes] = GLib.file_get_contents(POSITION_FILE);
+            return ok ? JSON.parse(new TextDecoder().decode(bytes)) : null;
+        } catch {
+            return null;
+        }
     }
 }

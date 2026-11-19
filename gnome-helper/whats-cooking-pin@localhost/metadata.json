@@ -1,7 +1,14 @@
 {
   "uuid": "whats-cooking-pin@localhost",
   "name": "What's Cooking pin",
-  "description": "Keeps the What's Cooking window above other windows, on every workspace, at the top right of the screen.",
-  "shell-version": ["46", "47", "48", "49", "50"],
-  "version": 1
+  "description": "Keeps the What's Cooking window above other windows on every workspace, remembers its position, hides it from Alt+Tab and the dock, and adds a shortcut to show it.",
+  "shell-version": [
+    "46",
+    "47",
+    "48",
+    "49",
+    "50"
+  ],
+  "version": 1,
+  "settings-schema": "org.gnome.shell.extensions.whats-cooking-pin"
 }

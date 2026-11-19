@@ -13,13 +13,17 @@
         "title": "What's Cooking",
         "width": 320,
         "height": 420,
-        "resizable": false,
+        "resizable": true,
         "decorations": false,
         "transparent": true,
         "shadow": false,
         "alwaysOnTop": true,
         "skipTaskbar": true,
-        "visibleOnAllWorkspaces": true
+        "visibleOnAllWorkspaces": true,
+        "minWidth": 320,
+        "minHeight": 420,
+        "maxWidth": 640,
+        "maxHeight": 1260
       }
     ],
     "security": {

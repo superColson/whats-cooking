@@ -5,3 +5,5 @@ node_modules/
 app/src-tauri/target/
 app/src-tauri/gen/
 test/out-tauri/
+gnome-helper/*/schemas/gschemas.compiled
+test/out-v1/

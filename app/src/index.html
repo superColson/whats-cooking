@@ -3,105 +3,41 @@
 <head>
 <meta charset="utf-8">
 <title>What's Cooking</title>
-<style>
-  :root {
-    --bg: rgba(28, 28, 30, 0.95);
-    --line: rgba(255, 255, 255, 0.07);
-    --text: #ececec;
-    --muted: rgba(255, 255, 255, 0.45);
-    --queued: rgba(255, 255, 255, 0.45);
-    --cooking: #3584e4;
-    --waiting: #f5c211;
-    --ready: #2ec27e;
-  }
-  html, body { margin: 0; background: transparent; overflow: hidden; }
-  body { font: 13px/1.35 Cantarell, "Inter", system-ui, sans-serif; color: var(--text); padding: 6px; }
-  .card { background: var(--bg); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; overflow: hidden; }
-  header { display: flex; align-items: center; gap: 8px; padding: 9px 12px 7px 14px; cursor: grab; user-select: none; }
-  header h1 { flex: 1; margin: 0; font-size: 13px; font-weight: 700; }
-  .badge { font-size: 11px; color: var(--ready); background: rgba(46,194,126,0.18); border-radius: 99px; padding: 1px 8px; }
-  .dish { display: flex; align-items: center; gap: 9px; padding: 6px 12px; border-top: 1px solid var(--line); }
-  .dot { width: 10px; height: 10px; border-radius: 50%; flex: none; box-sizing: border-box; }
-  .dot.queued { border: 1.5px solid var(--queued); }
-  .dot.cooking { background: var(--cooking); }
-  .dot.waiting { background: var(--waiting); }
-  .dot.ready { background: var(--ready); }
-  .txt { min-width: 0; flex: 1; }
-  .title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .meta { font-size: 11px; color: var(--muted); }
-  .dish.ready { animation: pulse 2.4s ease-in-out infinite; }
-  @keyframes pulse { 0%, 100% { background: transparent; } 50% { background: rgba(46,194,126,0.16); } }
-  .empty { padding: 10px 14px; color: var(--muted); }
-  footer { padding: 6px 14px 8px; font-size: 11px; color: var(--muted); border-top: 1px solid var(--line); }
-</style>
+<link rel="stylesheet" href="style.css">
+<script src="vendor/Sortable.min.js"></script>
+<script type="module" src="app.js"></script>
 </head>
 <body>
-<div class="card">
+<div class="card" id="card">
   <header data-tauri-drag-region>
     <h1 data-tauri-drag-region id="head">Cooking</h1>
     <span class="badge" id="badge" hidden></span>
+    <button class="icon" id="collapse" title="Collapse" aria-label="Collapse">
+      <svg viewBox="0 0 16 16"><path d="M4 10l4-4 4 4"/></svg>
+    </button>
+    <button class="icon" id="hide" title="Hide (tray icon shows it again)" aria-label="Hide">
+      <svg viewBox="0 0 16 16"><path d="M4 4l8 8M12 4l-8 8"/></svg>
+    </button>
   </header>
-  <div id="list"></div>
-  <footer id="foot">prototype · reads the shared journal</footer>
+  <div class="body" id="body">
+    <div class="entry">
+      <input id="entry" placeholder="New dish  #tag  /w 20" autocomplete="off" spellcheck="false">
+      <ul class="suggest" id="suggest" hidden></ul>
+    </div>
+    <div class="list" id="list"></div>
+    <section class="washer" id="washer">
+      <button class="washer-head" id="washer-toggle">
+        <svg viewBox="0 0 16 16" class="chev"><path d="M6 4l4 4-4 4"/></svg>
+        <span id="washer-title">Dishwasher</span>
+      </button>
+      <div class="washer-body" id="washer-body">
+        <div id="washer-list"></div>
+        <button class="wash" id="wash">Run the dishwasher</button>
+      </div>
+    </section>
+  </div>
+  <div class="grip-resize" id="resize" title="Resize"></div>
 </div>
-<script>
-  const STATE = {todo: 'queued', doing: 'cooking', wait: 'waiting'};
-
-  function fold(text) {
-    const tasks = new Map();
-    let order = [];
-    for (const line of text.split('\n')) {
-      let ev;
-      try { ev = JSON.parse(line); } catch { continue; }
-      const t = tasks.get(ev.id);
-      if (ev.op === 'add' && !t) {
-        tasks.set(ev.id, {...ev, alert: false});
-        order.unshift(ev.id);
-      } else if (ev.op === 'set' && t) {
-        for (const k of ['title', 'tag', 'state', 'until', 'alert']) if (k in ev) t[k] = ev[k];
-      } else if (ev.op === 'move' && t) {
-        order = order.filter(i => i !== ev.id);
-        order.splice(ev.after ? order.indexOf(ev.after) + 1 : 0, 0, ev.id);
-      } else if (ev.op === 'delete') {
-        tasks.delete(ev.id);
-        order = order.filter(i => i !== ev.id);
-      }
-    }
-    return order.map(i => tasks.get(i)).filter(t => t && t.state !== 'done');
-  }
-
-  function stateOf(t) {
-    const ready = t.alert || (t.state === 'wait' && t.until && Date.parse(t.until) <= Date.now());
-    return ready ? 'ready' : (STATE[t.state] || 'queued');
-  }
-
-  function render(dishes) {
-    const list = document.getElementById('list');
-    list.replaceChildren();
-    let ready = 0;
-    for (const d of dishes) {
-      const st = stateOf(d);
-      if (st === 'ready') ready++;
-      const row = document.createElement('div');
-      row.className = `dish ${st}`;
-      row.innerHTML = `<span class="dot ${st}"></span><div class="txt"><div class="title"></div><div class="meta"></div></div>`;
-      row.querySelector('.title').textContent = d.title;
-      row.querySelector('.meta').textContent = [d.tag && `#${d.tag}`, st].filter(Boolean).join(' · ');
-      list.append(row);
-    }
-    if (!dishes.length) list.innerHTML = '<div class="empty">Nothing cooking.</div>';
-    document.getElementById('head').textContent = `Cooking · ${dishes.length}`;
-    const badge = document.getElementById('badge');
-    badge.hidden = !ready;
-    badge.textContent = `${ready} ready`;
-  }
-
-  async function refresh() {
-    const text = await window.__TAURI__.core.invoke('read_journal');
-    render(fold(text));
-  }
-  refresh();
-  setInterval(refresh, 2000);
-</script>
+<div class="popover" id="popover" hidden></div>
 </body>
 </html>

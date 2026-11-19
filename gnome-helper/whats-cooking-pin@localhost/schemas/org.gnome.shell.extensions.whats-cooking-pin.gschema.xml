@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<schemalist>
+  <schema id="org.gnome.shell.extensions.whats-cooking-pin" path="/org/gnome/shell/extensions/whats-cooking-pin/">
+    <key name="toggle-card" type="as">
+      <default><![CDATA[['<Super><Shift>c']]]></default>
+      <summary>Show the What's Cooking card and focus its quick entry</summary>
+    </key>
+  </schema>
+</schemalist>
