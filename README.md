@@ -1,63 +1,63 @@
 # What's Cooking
 
-Liste flottante, toujours au premier plan, des sujets « sur le feu ». Une Card par-dessus les fenêtres, des Timers qui préviennent quand une attente est finie, et l'historique de la journée pour remplir ses timesheets.
+A floating, always-on-top list of what you have "on the stove". One card above your windows, timers that tell you when a wait is over, and the day's history to help fill in timesheets.
 
-- **App Tauri 2** (`app/`) : la Card, en HTML/CSS/JS.
-- **CLI `cook`** (`bin/cook`) : la même liste depuis le terminal, et le point d'entrée des hooks Claude Code.
-- **Extension GNOME `whats-cooking-pin`** (`gnome-helper/`) : sous GNOME (Wayland compris), garde la Card au premier plan sur tous les espaces de travail, mémorise sa position, la retire d'Alt+Tab et du dock, et ajoute le raccourci `Super+Shift+C`.
+- **Tauri 2 app** (`app/`): the card, in HTML/CSS/JS.
+- **`cook` CLI** (`bin/cook`): the same list from the terminal, and the entry point for Claude Code hooks.
+- **`whats-cooking-pin` GNOME extension** (`gnome-helper/`): on GNOME (Wayland included), keeps the card above other windows on every workspace, remembers its position, hides it from Alt+Tab and the dock, and adds the `Super+Shift+C` shortcut.
 
-Tout passe par un journal append-only partagé : `~/.local/share/whats-cooking/journal.jsonl`.
+Everything goes through a shared append-only journal: `~/.local/share/whats-cooking/journal.jsonl`.
 
-## Installation
+## Install
 
-Prérequis : Rust (rustup), Node.js, WebKitGTK 4.1 (Ubuntu : `libwebkit2gtk-4.1-dev`), `jq`.
-
-```bash
-./install.sh                # build release, installe app + CLI + lanceur + autostart + extension
-./install.sh --dev          # build debug, liens symboliques vers le repo (CLI, extension)
-./install.sh --hooks        # + hooks Claude Code (settings.json sauvegardé avant)
-```
-
-Puis redémarrer GNOME Shell (X11 : `Alt+F2` → `r` ; Wayland : déconnexion) et lancer `whats-cooking &`. L'app démarre ensuite seule à chaque login.
-
-## Désinstallation
+Requirements: Rust (rustup), Node.js, WebKitGTK 4.1 (Ubuntu: `libwebkit2gtk-4.1-dev`), `jq`.
 
 ```bash
-./uninstall.sh          # retire tout, garde les Dishes et l'historique
-./uninstall.sh --purge  # supprime aussi les données
+./install.sh                # release build; installs app, CLI, launcher, autostart and extension
+./install.sh --dev          # debug build; symlinks to this repo (app, CLI, extension)
+./install.sh --hooks        # also registers Claude Code hooks (settings.json is backed up first)
 ```
 
-## Utilisation
+Then restart GNOME Shell (X11: `Alt+F2` → `r`; Wayland: log out and back in) and run `whats-cooking &`. The app then starts on its own at every login.
+
+## Uninstall
+
+```bash
+./uninstall.sh          # removes everything, keeps dishes and history
+./uninstall.sh --purge  # also deletes the data
+```
+
+## Usage
 
 | Action | Card | CLI |
 |---|---|---|
-| Ajouter | Quick entry : `Titre #tag /w 20` (`#` propose les Tags existants) | `cook add "Titre #tag /w 20"` (`--start` = Cooking) |
-| Queued ⇄ Cooking | clic sur la pastille | `cook queue <n>` / `cook start <n>` |
-| Timer (Waiting → Ready) | horloge : clic +5 min, molette ±1 min, clic droit annule | `cook wait <n> <min>` |
-| Terminer | coche (le Dish part au Dishwasher) | `cook done <n>` |
-| Renommer | double-clic sur le titre | `cook rename <n> nouveau titre` |
-| Tag | clic sur le badge : choisir, créer, retirer, changer la couleur (8 couleurs) | `cook tag <n> nom` |
-| Supprimer un Tag | × sur le Tag dans la liste (deux clics) | `cook tags --rm nom` (`cook tags` = liste) |
-| Supprimer | × deux fois | `cook rm <n>` |
-| Réordonner | glisser la poignée | — |
-| Dishwasher | section du bas : Dishes Done depuis 4 h, clic = ressortir | `cook wash` (vider) |
-| Journée | — | `cook log` / `cook log yesterday` / `cook log 2026-11-18` |
+| Add | Quick entry: `Title #tag /w 20` (`#` suggests existing tags) | `cook add "Title #tag /w 20"` (`--start` = Cooking) |
+| Queued ⇄ Cooking | click the state dot | `cook queue <n>` / `cook start <n>` |
+| Timer (Waiting → Ready) | clock: click +5 min, wheel ±1 min, right-click cancels | `cook wait <n> <min>` |
+| Done | check mark (the dish goes to the Dishwasher) | `cook done <n>` |
+| Rename | double-click the title | `cook rename <n> new title` |
+| Tag | click the badge: pick, create, remove, change color (8 colors) | `cook tag <n> name` |
+| Delete a tag | × on the tag in the list (two clicks) | `cook tags --rm name` (`cook tags` lists them) |
+| Delete a dish | × twice | `cook rm <n>` |
+| Reorder | drag the grip | — |
+| Dishwasher | bottom section: dishes done since 4 a.m., click one to bring it back | `cook wash` (empty it) |
+| Day log | — | `cook log` / `cook log yesterday` / `cook log 2026-11-18` |
 
-États : **Queued** · **Cooking** · **Waiting** · **Ready** · **Done**. La Card se redimensionne par le coin bas-droit, bascule entre taille compacte et élargie avec le bouton ⤢, se masque avec `×` (icône de la barre système, qui affiche aussi le nombre de Dishes, ou `Super+Shift+C` pour la ré-afficher).
+States: **Queued** · **Cooking** · **Waiting** · **Ready** · **Done**. Resize the card from its bottom-right corner, switch between compact and expanded sizes with the ⤢ button, hide it with `×` (the tray icon, which also shows the dish count, or `Super+Shift+C` brings it back).
 
-## Sessions Claude
+## Claude sessions
 
-Avec `--hooks`, chaque session Claude Code devient un Dish (Tag = dossier du projet) :
+With `--hooks`, every Claude Code session becomes a dish (tag = project folder):
 
-- prompt envoyé → **Waiting** « Claude working… » ;
-- fin de tour ou demande de permission → **Ready** ;
-- pas de Timer pendant que Claude travaille ; une fois Ready, le Timer sert de rappel (Waiting N min, puis Ready) ;
-- titre = titre de la session Claude Desktop quand il est connu, sinon la 1re ligne du prompt ; un Dish renommé à la main garde son titre.
+- prompt sent → **Waiting** "Claude working…";
+- turn ended or permission requested → **Ready**;
+- no timer while Claude works; once Ready, the timer acts as a reminder (Waiting for N min, then Ready again);
+- title = the Claude Desktop session title when known, otherwise the first line of the prompt; a dish renamed by hand keeps its title.
 
 ## Tests
 
-`test/run-v1-headless.sh [steps]` lance un GNOME Shell headless Wayland isolé avec l'app et des données d'exemple, joue éventuellement un scénario (`test/steps-v1*.sh`) et dépose captures et journal dans `test/out-v1/`.
+`test/run-v1-headless.sh [steps]` starts an isolated headless GNOME Shell (Wayland) with the app and sample data, optionally plays a scenario (`test/steps-v1*.sh`), and saves screenshots and the journal in `test/out-v1/`.
 
-## Licence
+## License
 
 [GPL-3.0](LICENSE)
