@@ -36,20 +36,22 @@ Puis redémarrer GNOME Shell (X11 : `Alt+F2` → `r` ; Wayland : déconnexion) e
 | Timer (Waiting → Ready) | horloge : clic +5 min, molette ±1 min, clic droit annule | `cook wait <n> <min>` |
 | Terminer | coche (le Dish part au Dishwasher) | `cook done <n>` |
 | Renommer | double-clic sur le titre | `cook rename <n> nouveau titre` |
-| Tag | clic sur le badge : choisir, créer, retirer, changer la couleur | `cook tag <n> nom` |
+| Tag | clic sur le badge : choisir, créer, retirer, changer la couleur (8 couleurs) | `cook tag <n> nom` |
+| Supprimer un Tag | × sur le Tag dans la liste (deux clics) | `cook tags --rm nom` (`cook tags` = liste) |
 | Supprimer | × deux fois | `cook rm <n>` |
 | Réordonner | glisser la poignée | — |
 | Dishwasher | section du bas : Dishes Done depuis 4 h, clic = ressortir | `cook wash` (vider) |
 | Journée | — | `cook log` / `cook log yesterday` / `cook log 2026-11-18` |
 
-États : **Queued** · **Cooking** · **Waiting** · **Ready** · **Done**. La Card se redimensionne par le coin bas-droit, se réduit avec `^`, se masque avec `×` (icône de la barre système ou `Super+Shift+C` pour la ré-afficher).
+États : **Queued** · **Cooking** · **Waiting** · **Ready** · **Done**. La Card se redimensionne par le coin bas-droit, bascule entre taille compacte et élargie avec le bouton ⤢, se masque avec `×` (icône de la barre système, qui affiche aussi le nombre de Dishes, ou `Super+Shift+C` pour la ré-afficher).
 
 ## Sessions Claude
 
 Avec `--hooks`, chaque session Claude Code devient un Dish (Tag = dossier du projet) :
 
 - prompt envoyé → **Waiting** « Claude working… » ;
-- fin de tour ou demande de permission → **Ready** « to review » ;
+- fin de tour ou demande de permission → **Ready** ;
+- pas de Timer pendant que Claude travaille ; une fois Ready, le Timer sert de rappel (Waiting N min, puis Ready) ;
 - titre = titre de la session Claude Desktop quand il est connu, sinon la 1re ligne du prompt ; un Dish renommé à la main garde son titre.
 
 ## Tests
