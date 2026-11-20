@@ -1,6 +1,6 @@
 [package]
 name = "whats-cooking"
-version = "0.1.0"
+version = "1.0.0"
 description = "Floating task list"
 authors = ["superColson"]
 license = "GPL-3.0"
