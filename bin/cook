@@ -24,10 +24,7 @@ TAG_MAX = 20
 DAY_START_HOUR = 4
 STATES = ("queued", "cooking", "waiting", "ready", "done")
 LEGACY_STATES = {"todo": "queued", "doing": "cooking", "wait": "waiting"}
-PALETTE = (
-    "#3584e4", "#2ec27e", "#e66100", "#9141ac", "#e01b24", "#1c71d8", "#26a269", "#c64600",
-    "#813d9c", "#f5c211", "#33d17a", "#ff7800", "#dc8add", "#62a0ea", "#865e3c", "#5e5c64",
-)
+PALETTE = ("#3584e4", "#2ec27e", "#f5c211", "#ff7800", "#e01b24", "#9141ac", "#e66198", "#986a44")
 WEEKDAYS = ("Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday")
 MARKS = {"queued": "○", "cooking": "●", "waiting": "◐", "ready": "!"}
 
@@ -134,11 +131,30 @@ def fold():
             tag = tags.setdefault(ev["name"], {"name": ev["name"], "color": None, "used": ev.get("ts")})
             if ev.get("color"):
                 tag["color"] = ev["color"]
+        elif op == "tag_delete":
+            tags.pop(ev.get("name"), None)
         elif op == "wash":
             washed_at = ev.get("ts")
     for index, tag in enumerate(tags.values()):
-        tag["color"] = tag["color"] or PALETTE[index % len(PALETTE)]
+        tag["color"] = nearest_color(tag["color"] or PALETTE[index % len(PALETTE)])
     return [dishes[i] for i in order if i in dishes], tags, washed_at
+
+
+def nearest_color(hex_color):
+    """Map any color to the closest palette color (older journals used a larger palette).
+
+    :param hex_color: ``#rrggbb``
+    :return: palette color
+    :rtype: str
+    """
+    if hex_color in PALETTE:
+        return hex_color
+
+    def rgb(value):
+        return [int(value[i:i + 2], 16) for i in (1, 3, 5)]
+
+    r, g, b = rgb(hex_color)
+    return min(PALETTE, key=lambda c: sum((x - y) ** 2 for x, y in zip((r, g, b), rgb(c))))
 
 
 def effective_state(dish):
@@ -336,6 +352,30 @@ def cmd_tag(args):
     append({"op": "set", "id": dish["id"], "tag": name})
 
 
+def cmd_tags(args):
+    """List tags, or delete one (it is also cleared from active dishes).
+
+    :param args: parsed arguments
+    :return: None
+    """
+    dishes, tags, _washed = fold()
+    if args.rm:
+        name = args.rm.lstrip("#")
+        if name not in tags:
+            sys.exit(f"cook: no tag '{name}'")
+        append({"op": "tag_delete", "name": name})
+        for dish in dishes:
+            if dish["state"] != "done" and dish["tag"] == name:
+                append({"op": "set", "id": dish["id"], "tag": ""})
+        return
+    used = defaultdict(int)
+    for dish in dishes:
+        if dish["state"] != "done" and dish["tag"]:
+            used[dish["tag"]] += 1
+    for name in sorted(tags):
+        print(f"#{name:<20} {tags[name]['color']}  {used[name]} active")
+
+
 def cmd_rm(args):
     """Delete a dish without marking it done.
 
@@ -463,6 +503,10 @@ def main():
     p = sub.add_parser("rm", help="delete a dish without marking it done")
     p.add_argument("ref")
     p.set_defaults(func=cmd_rm)
+
+    p = sub.add_parser("tags", help="list tags; --rm NAME deletes one")
+    p.add_argument("--rm", metavar="NAME")
+    p.set_defaults(func=cmd_tags)
 
     sub.add_parser("wash", help="empty the Dishwasher").set_defaults(func=cmd_wash)
 

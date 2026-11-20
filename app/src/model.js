@@ -2,9 +2,8 @@
 
 export const STATES = ['queued', 'cooking', 'waiting', 'ready', 'done'];
 export const PALETTE = [
-  '#3584e4', '#2ec27e', '#e66100', '#9141ac', '#e01b24', '#1c71d8', '#26a269', '#c64600',
-  '#813d9c', '#f5c211', '#33d17a', '#ff7800', '#dc8add', '#62a0ea', '#865e3c', '#5e5c64',
-];
+  '#3584e4', '#2ec27e', '#f5c211', '#ff7800', '#e01b24', '#9141ac', '#e66198', '#986a44',
+]
 const LEGACY_STATES = {todo: 'queued', doing: 'cooking', wait: 'waiting'};
 const DAY_START_HOUR = 4;
 export const TAG_MAX = 20;
@@ -68,13 +67,36 @@ export function fold(text) {
       touchTag(ev.name, tags.get(ev.name)?.used ?? ev.ts);
       if (ev.color) tags.get(ev.name).color = ev.color;
       break;
+    case 'tag_delete':
+      tags.delete(ev.name);
+      break;
     case 'wash':
       washedAt = ev.ts;
       break;
     }
   }
-  [...tags.values()].forEach((tag, i) => { tag.color ??= PALETTE[i % PALETTE.length]; });
+  [...tags.values()].forEach((tag, i) => { tag.color = nearestColor(tag.color ?? PALETTE[i % PALETTE.length]); });
   return {dishes: order.map(id => dishes.get(id)).filter(Boolean), tags, washedAt};
+}
+
+/**
+ * Map any color to the closest palette color (older journals used a larger palette).
+ *
+ * @param {string} hex `#rrggbb`
+ * @returns {string}
+ */
+export function nearestColor(hex) {
+  if (PALETTE.includes(hex)) return hex;
+  const rgb = h => [1, 3, 5].map(i => parseInt(h.slice(i, i + 2), 16));
+  const [r, g, b] = rgb(hex);
+  let best = PALETTE[0];
+  let bestDist = Infinity;
+  for (const color of PALETTE) {
+    const [r2, g2, b2] = rgb(color);
+    const dist = (r - r2) ** 2 + (g - g2) ** 2 + (b - b2) ** 2;
+    if (dist < bestDist) { best = color; bestDist = dist; }
+  }
+  return best;
 }
 
 /**

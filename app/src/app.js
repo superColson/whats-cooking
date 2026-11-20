@@ -16,6 +16,7 @@ const SCREEN_MARGIN = 64;
 const EXPANDED_W_RATIO = 0.9;
 const EXPANDED_H_RATIO = 0.7;
 const RESIZE_MS = 220;
+const BODY_PAD = 6;
 const APP_TITLE = "What's cooking\u00a0?";
 const DAY_MS = 86400e3;
 
@@ -363,7 +364,21 @@ function openTagPopover(dish, anchor) {
       const opt = el('div', 'opt');
       const sw = el('span', 'swatch');
       sw.style.background = t.color;
-      opt.append(sw, el('span', '', `#${t.name}`));
+      const name = el('span', 'name', `#${t.name}`);
+      const rm = el('button', 'rm');
+      rm.innerHTML = icon('M4 4l8 8M12 4l-8 8');
+      rm.title = `Delete #${t.name} (click twice)`;
+      rm.onclick = ev => {
+        ev.stopPropagation();
+        if (rm.classList.contains('armed')) {
+          deleteTag(t.name);
+          return;
+        }
+        rm.classList.add('armed');
+        rm.title = 'Click again: removes the tag from the list and from active dishes';
+        setTimeout(() => rm.classList.remove('armed'), 2500);
+      };
+      opt.append(sw, name, rm);
       opt.onclick = () => assignTag(dish, t.name);
       return opt;
     });
@@ -428,6 +443,21 @@ async function assignTag(dish, name) {
   closePopover();
   await ensureTag(name);
   emit({op: 'set', id: dish.id, tag: name});
+}
+
+/**
+ * Delete a tag from the list and clear it from active dishes (done ones keep it for the log).
+ *
+ * @param {string} name
+ */
+async function deleteTag(name) {
+  closePopover();
+  await invoke('append_event', {event: {op: 'tag_delete', name}});
+  for (const dish of kitchen.dishes) {
+    if (dish.state !== 'done' && dish.tag === name)
+      await invoke('append_event', {event: {op: 'set', id: dish.id, tag: ''}});
+  }
+  await refresh(true);
 }
 
 /**
@@ -604,23 +634,46 @@ async function syncSizeButton() {
 }
 
 /**
- * Resize the window to a target size with an ease-out animation.
+ * Wait for the next painted frame.
  *
- * @param {{width: number, height: number}} target logical size
+ * @returns {Promise<void>}
+ */
+function nextFrame() {
+  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+}
+
+/**
+ * Animate the card between compact and expanded sizes.
+ *
+ * The window is resized once (before growing, after shrinking) and the card
+ * itself is animated inside it, anchored top right: resizing the window on
+ * every frame made the header flicker.
+ *
+ * @param {{width: number, height: number}} target logical window size
  */
 async function animateSize(target) {
   resizing = true;
-  const from = await currentSize();
-  const start = performance.now();
-  for (;;) {
-    const t = Math.min(1, (performance.now() - start) / RESIZE_MS);
-    const k = 1 - (1 - t) ** 3;
-    await appWindow.setSize(new LogicalSize(
-      Math.round(from.width + (target.width - from.width) * k),
-      Math.round(from.height + (target.height - from.height) * k)));
-    if (t >= 1) break;
-    await new Promise(requestAnimationFrame);
+  const card = els.card;
+  const from = card.getBoundingClientRect();
+  const pad = 2 * BODY_PAD;
+  const growing = target.width * target.height > (from.width + pad) * (from.height + pad);
+  card.style.width = `${from.width}px`;
+  card.style.height = `${from.height}px`;
+  if (growing) {
+    await appWindow.setSize(new LogicalSize(target.width, target.height));
+    await nextFrame();
   }
+  card.classList.add('animating');
+  void card.offsetWidth; // commit the start size so the transition runs
+  card.style.width = `${target.width - pad}px`;
+  card.style.height = `${target.height - pad}px`;
+  await new Promise(resolve => setTimeout(resolve, RESIZE_MS + 40));
+  card.classList.remove('animating');
+  if (!growing)
+    await appWindow.setSize(new LogicalSize(target.width, target.height));
+  await nextFrame();
+  card.style.width = '';
+  card.style.height = '';
   resizing = false;
   syncSizeButton();
 }
