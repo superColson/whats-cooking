@@ -417,7 +417,7 @@ def cmd_hook(_args):
             if dish["state"] == "done":
                 append({"op": "move", "id": dish_id, "after": None})
             append({"op": "set", "id": dish_id, "state": "waiting", "until": None})
-        elif event_name in ("Stop", "Notification") and dish and dish["state"] == "waiting":
+        elif event_name in ("Stop", "Notification") and dish and dish["state"] == "waiting" and not dish.get("until"):
             append({"op": "set", "id": dish_id, "state": "ready"})
         if dish and desktop_title and not dish["title_locked"] and desktop_title != dish["title"]:
             append({"op": "set", "id": dish_id, "title": desktop_title})

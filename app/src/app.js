@@ -258,7 +258,10 @@ function dishRow(dish, now) {
     del.title = 'Click again to delete';
     setTimeout(() => del.classList.remove('armed'), 2500);
   };
-  actions.append(timer, done, del);
+  // Claude decides when its own turn ends; the Timer only snoozes a finished (Ready) Claude dish.
+  const claudeWorking = dish.source === 'claude' && dish.state === 'waiting' && !dish.until;
+  if (dish.source === 'claude' && dish.state === 'ready') timer.title = 'Remind me later: click +5 min · wheel ±1 min';
+  actions.append(...(claudeWorking ? [done, del] : [timer, done, del]));
 
   txt.append(title, meta);
   row.append(grip, dot, txt, actions);
