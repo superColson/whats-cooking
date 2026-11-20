@@ -1,4 +1,3 @@
-import Gio from 'gi://Gio';
 import GLib from 'gi://GLib';
 import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
@@ -14,18 +13,6 @@ const PLACE_DELAY_MS = 250;
 const PLACE_TRIES = 20;
 const SAVE_DELAY_MS = 500;
 const DOCK_SNAP = 24;
-const ANIM_STEP_MS = 16;
-const DBUS_PATH = '/io/github/supercolson/WhatsCooking';
-const DBUS_IFACE = `<node>
-  <interface name="io.github.supercolson.WhatsCooking">
-    <method name="AnimateCard">
-      <arg type="i" direction="in" name="width"/>
-      <arg type="i" direction="in" name="height"/>
-      <arg type="i" direction="in" name="duration"/>
-      <arg type="b" direction="out" name="done"/>
-    </method>
-  </interface>
-</node>`;
 const POSITION_FILE = GLib.build_filenamev([GLib.get_user_data_dir(), 'whats-cooking', 'window-position.json']);
 
 /**
@@ -53,20 +40,12 @@ export default class WhatsCookingPinExtension extends Extension {
         this._patchWindowLists();
         Main.wm.addKeybinding('toggle-card', this.getSettings(), Meta.KeyBindingFlags.NONE,
             Shell.ActionMode.NORMAL | Shell.ActionMode.OVERVIEW, () => this._showCard());
-        this._animId = null;
-        this._dbus = Gio.DBusExportedObject.wrapJSObject(DBUS_IFACE, this);
-        this._dbus.export(Gio.DBus.session, DBUS_PATH);
     }
 
     /**
      * Undo everything enable() did.
      */
     disable() {
-        this._dbus.unexport();
-        this._dbus = null;
-        if (this._animId)
-            GLib.source_remove(this._animId);
-        this._animId = null;
         Main.wm.removeKeybinding('toggle-card');
         this._unpatchWindowLists();
         global.display.disconnect(this._windowCreatedId);
@@ -74,53 +53,6 @@ export default class WhatsCookingPinExtension extends Extension {
             GLib.source_remove(this._saveId);
         this._windowCreatedId = this._saveId = null;
         this._pinned = null;
-    }
-
-    // ---- D-Bus: size animation ----------------------------------------------
-
-    /**
-     * Animate the card window to a new size, moving and resizing it in one
-     * compositor operation per frame so it never jumps sideways.
-     *
-     * A card docked to the right edge of the screen keeps its right edge,
-     * otherwise it keeps its left edge; it always stays inside the work area.
-     *
-     * @param {number} width target frame width
-     * @param {number} height target frame height
-     * @param {number} duration animation length in milliseconds
-     * @returns {boolean} false when the card window is not found
-     */
-    AnimateCard(width, height, duration) {
-        const win = global.get_window_actors().map(a => a.meta_window).find(isOurs);
-        if (!win)
-            return false;
-        if (this._animId)
-            GLib.source_remove(this._animId);
-        const area = Main.layoutManager.getWorkAreaForMonitor(win.get_monitor());
-        const from = win.get_frame_rect();
-        const right = from.x + from.width;
-        const docked = right >= area.x + area.width - MARGIN - DOCK_SNAP;
-        const clampX = (x, w) => Math.min(Math.max(x, area.x), area.x + area.width - w);
-        const clampY = (y, h) => Math.min(Math.max(y, area.y), area.y + area.height - h);
-        const start = GLib.get_monotonic_time();
-        this._animating = true;
-        const step = () => {
-            const t = Math.min(1, (GLib.get_monotonic_time() - start) / 1000 / Math.max(duration, 1));
-            const k = 1 - (1 - t) ** 3;
-            const w = Math.round(from.width + (width - from.width) * k);
-            const h = Math.round(from.height + (height - from.height) * k);
-            const x = clampX(docked ? right - w : from.x, w);
-            win.move_resize_frame(true, x, clampY(from.y, h), w, h);
-            if (t < 1)
-                return GLib.SOURCE_CONTINUE;
-            this._animId = null;
-            this._animating = false;
-            this._scheduleSave(win);
-            return GLib.SOURCE_REMOVE;
-        };
-        step();
-        this._animId = GLib.timeout_add(GLib.PRIORITY_HIGH, ANIM_STEP_MS, step);
-        return true;
     }
 
     // ---- shortcut -----------------------------------------------------------
@@ -268,8 +200,6 @@ export default class WhatsCookingPinExtension extends Extension {
      * @returns {Mtk.Rectangle} the frame rect now
      */
     _keepRightEdge(win, before) {
-        if (this._animating)
-            return win.get_frame_rect();
         const area = Main.layoutManager.getWorkAreaForMonitor(win.get_monitor());
         const rect = win.get_frame_rect();
         const right = before.x + before.width;

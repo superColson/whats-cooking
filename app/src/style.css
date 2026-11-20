@@ -15,12 +15,11 @@
 
 * { box-sizing: border-box; }
 html, body { margin: 0; height: 100%; background: transparent; overflow: hidden; }
-body { font: 13px/1.35 Cantarell, Inter, system-ui, sans-serif; color: var(--text); padding: 6px; user-select: none; -webkit-user-select: none;
-  display: flex; justify-content: flex-end; align-items: flex-start; }
+body { font: 13px/1.35 Cantarell, Inter, system-ui, sans-serif; color: var(--text); padding: 6px; user-select: none; -webkit-user-select: none; }
 button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
 svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
 
-.card { position: relative; width: 100%; height: 100%; flex: none; display: flex; flex-direction: column; background: var(--bg);
+.card { position: relative; height: 100%; display: flex; flex-direction: column; background: var(--bg);
   border: 1px solid rgba(255, 255, 255, 0.10); border-radius: 14px; overflow: hidden; }
 
 header { display: flex; align-items: center; gap: 6px; padding: 9px 8px 7px 14px; cursor: grab; flex: none; }
@@ -102,7 +101,6 @@ header h1 { flex: 1; margin: 0; font-size: 13px; font-weight: 700; white-space: 
 .washer.open .washer-body { grid-template-rows: 1fr; }
 .washer-inner { min-height: 0; overflow: hidden; }
 .washer.open .washer-inner { max-height: 40vh; overflow-y: auto; padding-bottom: 6px; }
-
 .clean { display: flex; align-items: center; gap: 8px; padding: 4px 14px; color: var(--muted); cursor: pointer; }
 .clean:hover { color: var(--text); background: var(--hover); }
 .clean .title { flex: 1; text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.25); }

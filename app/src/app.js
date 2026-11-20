@@ -635,29 +635,20 @@ async function syncSizeButton() {
 /**
  * Resize the window to a target size with an ease-out animation.
  *
- * Under GNOME the pin extension animates the window, moving and resizing it
- * in one step per frame; elsewhere the window is resized frame by frame here.
- *
  * @param {{width: number, height: number}} target logical size
  */
 async function animateSize(target) {
   resizing = true;
-  const byShell = await invoke('animate_card', {width: target.width, height: target.height, duration: RESIZE_MS})
-    .catch(() => false);
-  if (byShell) {
-    await new Promise(resolve => setTimeout(resolve, RESIZE_MS + 60));
-  } else {
-    const from = await currentSize();
-    const start = performance.now();
-    for (;;) {
-      const t = Math.min(1, (performance.now() - start) / RESIZE_MS);
-      const k = 1 - (1 - t) ** 3;
-      await appWindow.setSize(new LogicalSize(
-        Math.round(from.width + (target.width - from.width) * k),
-        Math.round(from.height + (target.height - from.height) * k)));
-      if (t >= 1) break;
-      await new Promise(requestAnimationFrame);
-    }
+  const from = await currentSize();
+  const start = performance.now();
+  for (;;) {
+    const t = Math.min(1, (performance.now() - start) / RESIZE_MS);
+    const k = 1 - (1 - t) ** 3;
+    await appWindow.setSize(new LogicalSize(
+      Math.round(from.width + (target.width - from.width) * k),
+      Math.round(from.height + (target.height - from.height) * k)));
+    if (t >= 1) break;
+    await new Promise(requestAnimationFrame);
   }
   resizing = false;
   syncSizeButton();
