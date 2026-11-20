@@ -71,6 +71,28 @@ fn set_tray_count(app: AppHandle, count: usize) {
     }
 }
 
+/// Ask the GNOME pin extension to animate the card window to a new size.
+///
+/// The extension moves and resizes the window in one compositor operation per
+/// frame. Returns false when the extension is not available (other desktops).
+#[tauri::command]
+async fn animate_card(width: i32, height: i32, duration: i32) -> bool {
+    if !cfg!(target_os = "linux") {
+        return false;
+    }
+    std::process::Command::new("gdbus")
+        .args([
+            "call", "--session",
+            "--dest", "org.gnome.Shell",
+            "--object-path", "/io/github/supercolson/WhatsCooking",
+            "--method", "io.github.supercolson.WhatsCooking.AnimateCard",
+            &width.to_string(), &height.to_string(), &duration.to_string(),
+        ])
+        .output()
+        .map(|out| out.status.success() && String::from_utf8_lossy(&out.stdout).contains("true"))
+        .unwrap_or(false)
+}
+
 /// Show the card if hidden, hide it otherwise.
 fn toggle_card(app: &AppHandle) {
     if let Some(win) = app.get_webview_window("main") {
@@ -120,7 +142,7 @@ pub fn run() {
         }))
         // Position is left to the window manager (and the GNOME pin extension on Wayland).
         .plugin(tauri_plugin_window_state::Builder::default().with_state_flags(StateFlags::SIZE).build())
-        .invoke_handler(tauri::generate_handler![read_journal, append_event, set_tray_count])
+        .invoke_handler(tauri::generate_handler![read_journal, append_event, set_tray_count, animate_card])
         .setup(|app| {
             build_tray(app.handle())?;
             Ok(())

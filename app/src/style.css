@@ -102,7 +102,7 @@ header h1 { flex: 1; margin: 0; font-size: 13px; font-weight: 700; white-space: 
 .washer.open .washer-body { grid-template-rows: 1fr; }
 .washer-inner { min-height: 0; overflow: hidden; }
 .washer.open .washer-inner { max-height: 40vh; overflow-y: auto; padding-bottom: 6px; }
-.card.animating { transition: width 0.22s cubic-bezier(0.2, 0, 0, 1), height 0.22s cubic-bezier(0.2, 0, 0, 1); }
+
 .clean { display: flex; align-items: center; gap: 8px; padding: 4px 14px; color: var(--muted); cursor: pointer; }
 .clean:hover { color: var(--text); background: var(--hover); }
 .clean .title { flex: 1; text-decoration: line-through; text-decoration-color: rgba(255, 255, 255, 0.25); }

@@ -16,7 +16,6 @@ const SCREEN_MARGIN = 64;
 const EXPANDED_W_RATIO = 0.9;
 const EXPANDED_H_RATIO = 0.7;
 const RESIZE_MS = 220;
-const BODY_PAD = 6;
 const APP_TITLE = "What's cooking\u00a0?";
 const DAY_MS = 86400e3;
 
@@ -634,46 +633,32 @@ async function syncSizeButton() {
 }
 
 /**
- * Wait for the next painted frame.
+ * Resize the window to a target size with an ease-out animation.
  *
- * @returns {Promise<void>}
- */
-function nextFrame() {
-  return new Promise(resolve => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-}
-
-/**
- * Animate the card between compact and expanded sizes.
+ * Under GNOME the pin extension animates the window, moving and resizing it
+ * in one step per frame; elsewhere the window is resized frame by frame here.
  *
- * The window is resized once (before growing, after shrinking) and the card
- * itself is animated inside it, anchored top right: resizing the window on
- * every frame made the header flicker.
- *
- * @param {{width: number, height: number}} target logical window size
+ * @param {{width: number, height: number}} target logical size
  */
 async function animateSize(target) {
   resizing = true;
-  const card = els.card;
-  const from = card.getBoundingClientRect();
-  const pad = 2 * BODY_PAD;
-  const growing = target.width * target.height > (from.width + pad) * (from.height + pad);
-  card.style.width = `${from.width}px`;
-  card.style.height = `${from.height}px`;
-  if (growing) {
-    await appWindow.setSize(new LogicalSize(target.width, target.height));
-    await nextFrame();
+  const byShell = await invoke('animate_card', {width: target.width, height: target.height, duration: RESIZE_MS})
+    .catch(() => false);
+  if (byShell) {
+    await new Promise(resolve => setTimeout(resolve, RESIZE_MS + 60));
+  } else {
+    const from = await currentSize();
+    const start = performance.now();
+    for (;;) {
+      const t = Math.min(1, (performance.now() - start) / RESIZE_MS);
+      const k = 1 - (1 - t) ** 3;
+      await appWindow.setSize(new LogicalSize(
+        Math.round(from.width + (target.width - from.width) * k),
+        Math.round(from.height + (target.height - from.height) * k)));
+      if (t >= 1) break;
+      await new Promise(requestAnimationFrame);
+    }
   }
-  card.classList.add('animating');
-  void card.offsetWidth; // commit the start size so the transition runs
-  card.style.width = `${target.width - pad}px`;
-  card.style.height = `${target.height - pad}px`;
-  await new Promise(resolve => setTimeout(resolve, RESIZE_MS + 40));
-  card.classList.remove('animating');
-  if (!growing)
-    await appWindow.setSize(new LogicalSize(target.width, target.height));
-  await nextFrame();
-  card.style.width = '';
-  card.style.height = '';
   resizing = false;
   syncSizeButton();
 }
