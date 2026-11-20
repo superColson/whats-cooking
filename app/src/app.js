@@ -1,4 +1,4 @@
-import {PALETTE, dayStart, fold, isExpired, newId, parseInput} from './model.js';
+import {PALETTE, TAG_MAX, dayStart, fold, isExpired, newId, parseInput} from './model.js';
 
 const tauri = window.__TAURI__;
 const invoke = tauri.core.invoke;
@@ -8,7 +8,7 @@ const LogicalSize = tauri.dpi?.LogicalSize ?? tauri.window.LogicalSize;
 const REFRESH_MS = 1000;
 const TIMER_CLICK_MIN = 5;
 const TIMER_WHEEL_MIN = 1;
-const MIN_W = 320;
+const MIN_W = 384;
 const MIN_H = 420;
 const MAX_W = 640;
 const MAX_H = 1260;
@@ -144,7 +144,6 @@ function icon(path) {
  */
 function stateDetail(dish, now) {
   const claude = dish.source === 'claude';
-  if (dish.state === 'ready') return claude ? 'to review' : '';
   if (dish.state === 'waiting') {
     if (dish.until) return `${Math.max(1, Math.ceil((Date.parse(dish.until) - now) / 60e3))} min`;
     return claude ? 'Claude…' : '';
@@ -161,6 +160,7 @@ function stateDetail(dish, now) {
 function tagBadge(name) {
   const color = kitchen.tags.get(name)?.color ?? PALETTE[0];
   const badge = el('span', 'tag', `#${name}`);
+  badge.title = `#${name}`;
   badge.style.background = `${color}33`;
   badge.style.color = color;
   return badge;
@@ -246,7 +246,7 @@ function dishRow(dish, now) {
     row.classList.add('leaving');
     setTimeout(() => emit({op: 'set', id: dish.id, state: 'done', until: null}), 260);
   };
-  const del = el('button', 'act');
+  const del = el('button', 'act del');
   del.innerHTML = icon('M4 4l8 8M12 4l-8 8');
   del.title = 'Delete (click twice)';
   del.onclick = () => {
@@ -260,10 +260,8 @@ function dishRow(dish, now) {
   };
   actions.append(timer, done, del);
 
-  const top = el('div', 'top');
-  top.append(title, actions);
-  txt.append(top, meta);
-  row.append(grip, dot, txt);
+  txt.append(title, meta);
+  row.append(grip, dot, txt, actions);
   return row;
 }
 
@@ -423,6 +421,7 @@ function palette(name) {
  * @param {string} name empty string clears the tag
  */
 async function assignTag(dish, name) {
+  name = name.slice(0, TAG_MAX);
   closePopover();
   await ensureTag(name);
   emit({op: 'set', id: dish.id, tag: name});

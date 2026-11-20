@@ -7,6 +7,7 @@ export const PALETTE = [
 ];
 const LEGACY_STATES = {todo: 'queued', doing: 'cooking', wait: 'waiting'};
 const DAY_START_HOUR = 4;
+export const TAG_MAX = 20;
 
 /**
  * Replay journal text into dishes, tags and the last wash time.
@@ -110,7 +111,7 @@ export function parseInput(text) {
   let wait = null;
   const title = text
     .replace(/\/w\s*(\d+)/i, (_m, minutes) => { wait = Number(minutes); return ''; })
-    .replace(/#([\w-]+)/g, (_m, name) => { if (!tag) tag = name; return ''; })
+    .replace(/#([\w-]+)/g, (_m, name) => { if (!tag) tag = name.slice(0, TAG_MAX); return ''; })
     .replace(/\s+/g, ' ')
     .trim();
   return {title, tag, wait};

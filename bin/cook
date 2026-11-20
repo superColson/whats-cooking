@@ -20,6 +20,7 @@ DATA_DIR = Path(os.environ.get("XDG_DATA_HOME") or Path.home() / ".local/share")
 JOURNAL = DATA_DIR / "journal.jsonl"
 CLAUDE_SESSIONS = Path(os.environ.get("XDG_CONFIG_HOME") or Path.home() / ".config") / "Claude/claude-code-sessions"
 TITLE_MAX = 70
+TAG_MAX = 20
 DAY_START_HOUR = 4
 STATES = ("queued", "cooking", "waiting", "ready", "done")
 LEGACY_STATES = {"todo": "queued", "doing": "cooking", "wait": "waiting"}
@@ -180,7 +181,7 @@ def parse_input(text):
         text = text[:match.start()] + text[match.end():]
     tags = re.findall(r"#([\w-]+)", text)
     text = re.sub(r"#[\w-]+", "", text)
-    return " ".join(text.split()), (tags[0] if tags else ""), wait
+    return " ".join(text.split()), (tags[0][:TAG_MAX] if tags else ""), wait
 
 
 def find(ref):
@@ -222,7 +223,7 @@ def env_tag(cwd):
     if any(p.startswith("scratch-workspaces") for p in parts):
         return "scratch"
     name = parts[-1] if parts else ""
-    return re.sub(r"^odoo-", "", name)
+    return re.sub(r"^odoo-", "", name)[:TAG_MAX]
 
 
 def claude_session_title(session_id):
@@ -330,7 +331,7 @@ def cmd_tag(args):
     :return: None
     """
     dish = find(args.ref)
-    name = (args.name or "").lstrip("#")
+    name = (args.name or "").lstrip("#")[:TAG_MAX]
     ensure_tag(name)
     append({"op": "set", "id": dish["id"], "tag": name})
 

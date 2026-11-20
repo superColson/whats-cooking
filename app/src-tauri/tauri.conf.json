@@ -11,7 +11,7 @@
       {
         "label": "main",
         "title": "What's cooking ?",
-        "width": 320,
+        "width": 384,
         "height": 420,
         "resizable": true,
         "decorations": false,
@@ -20,7 +20,7 @@
         "alwaysOnTop": true,
         "skipTaskbar": true,
         "visibleOnAllWorkspaces": true,
-        "minWidth": 320,
+        "minWidth": 384,
         "minHeight": 420,
         "maxWidth": 640,
         "maxHeight": 1260
